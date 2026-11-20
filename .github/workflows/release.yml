@@ -80,10 +80,11 @@ jobs:
             /^## / { if (found) exit; if (index($0, "## Sesja " v) == 1) { found=1; next } }
             found { print }' CHANGELOG.md > notes.md
           [ -s notes.md ] || echo "Poprawki i nowe funkcje." > notes.md
-          gh release create "$TAG" --repo "${{ github.repository }}" --draft \
-            --title "Sesja $VERSION" --notes-file notes.md --target "${{ github.sha }}"
-          ID=$(gh api "repos/${{ github.repository }}/releases" --jq ".[] | select(.tag_name == \"$TAG\" and .draft) | .id" | head -1)
-          [ -n "$ID" ] || { echo "::error::Nie znaleziono szkicu wydania $TAG"; exit 1; }
+          # numer szkicu bierzemy wprost z odpowiedzi API – lista wydań bywa opóźniona
+          ID=$(gh api -X POST "repos/${{ github.repository }}/releases" \
+            -f tag_name="$TAG" -f target_commitish="${{ github.sha }}" -f name="Sesja $VERSION" \
+            -F body=@notes.md -F draft=true --jq .id)
+          [ -n "$ID" ] || { echo "::error::Nie udało się utworzyć szkicu wydania $TAG"; exit 1; }
           echo "id=$ID" >> "$GITHUB_OUTPUT"
 
   build:
