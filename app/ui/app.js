@@ -1,4 +1,5 @@
-/* Sesja – interfejs aplikacji. Czysty JS, bez frameworka i bez kroku budowania. */
+/* Sesja – interfejs aplikacji. Czysty JS, bez frameworka i bez kroku budowania.
+   Wszystkie napisy pochodzą z i18n.js (funkcja t). */
 "use strict";
 
 const T = window.__TAURI__;
@@ -12,9 +13,9 @@ const LINKS = {
   issues: "https://github.com/krixishere/repomulitplayer/issues",
   reaperDownload: "https://www.reaper.fm/download.php",
   donate: [
-    { name: "Buy Me a Coffee", note: "Jednorazowa kawa dla twórcy", url: "https://buymeacoffee.com/krixishere" },
-    { name: "Ko-fi", note: "Wsparcie jednorazowe lub co miesiąc", url: "https://ko-fi.com/krixishere" },
-    { name: "GitHub Sponsors", note: "Stałe wsparcie przez GitHuba", url: "https://github.com/sponsors/krixishere" },
+    { name: "Buy Me a Coffee", note: "donate_bmc", url: "https://buymeacoffee.com/krixishere" },
+    { name: "Ko-fi", note: "donate_kofi", url: "https://ko-fi.com/krixishere" },
+    { name: "GitHub Sponsors", note: "donate_gh", url: "https://github.com/sponsors/krixishere" },
   ],
 };
 
@@ -28,19 +29,22 @@ const S = {
   host: { running: false },
   view: "studio",
   unread: 0,
-  chatSeen: 0,
   seenKeys: new Set(),
+  firstSync: false,
   audio: { el: new Audio(), id: null, raf: 0 },
   peaks: new Map(),
   musicFilter: null,
   releases: null,
+  changelog: "",
 };
 
 /* ------------------------------------------------------------------ narzędzia */
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const icon = (name) => `<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
+const icon = (name, style) => `<svg aria-hidden="true"${style ? ` style="${style}"` : ""}><use href="#i-${name}"/></svg>`;
+/* tłumaczenie z bezpiecznie wstawionymi parametrami (do HTML) */
+const th = (key, params = {}) => t(key, Object.fromEntries(Object.entries(params).map(([k, v]) => [k, esc(v)])));
 
 function fmtPos(sec) {
   sec = Math.max(0, Math.floor(sec || 0));
@@ -55,9 +59,9 @@ function parsePos(str) {
 function fmtClock(ts) {
   if (!ts) return "";
   const d = new Date(ts * 1000);
-  const hm = d.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" });
+  const hm = d.toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" });
   const today = new Date().toDateString() === d.toDateString();
-  return today ? hm : `${d.getDate()}.${String(d.getMonth() + 1).padStart(2, "0")} ${hm}`;
+  return today ? hm : `${d.toLocaleDateString(locale(), { day: "numeric", month: "numeric" })} ${hm}`;
 }
 function colorOf(user) {
   const s = S.session;
@@ -67,8 +71,11 @@ function initial(name) {
   return esc((name || "?").trim().charAt(0).toUpperCase());
 }
 function debounce(fn, ms) {
-  let t;
-  return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+  let tm;
+  return (...a) => { clearTimeout(tm); tm = setTimeout(() => fn(...a), ms); };
+}
+function statusLabel(st) {
+  return t({ on: "st_on", connecting: "st_connecting", error: "st_error" }[st] || "st_off");
 }
 
 /* ------------------------------------------------------------------ powiadomienia */
@@ -87,17 +94,13 @@ function toast({ title, text = "", actions = [], progress = false, timeout = 500
     const b = e.target.closest("button[data-i]");
     if (b) actions[+b.dataset.i].fn?.(close);
   });
-  let timer = timeout && !actions.length && !progress ? setTimeout(close, timeout) : null;
-  // nie zamykaj, gdy kursor jest nad powiadomieniem
+  const auto = timeout && !actions.length && !progress;
+  let timer = auto ? setTimeout(close, timeout) : null;
   el.addEventListener("mouseenter", () => timer && clearTimeout(timer));
-  el.addEventListener("mouseleave", () => { if (timeout && !actions.length && !progress) timer = setTimeout(close, 2500); });
-  return {
-    close,
-    setProgress(f) { const i = el.querySelector(".progress i"); if (i) i.style.width = `${Math.round(f * 100)}%`; },
-    setText(t) { let p = el.querySelector("p"); if (!p) { p = document.createElement("p"); el.querySelector("b").after(p); } p.textContent = t; },
-  };
+  el.addEventListener("mouseleave", () => { if (auto) timer = setTimeout(close, 2500); });
+  return { close };
 }
-const fail = (e) => toast({ title: "Coś poszło nie tak", text: String(e), timeout: 7000 });
+const fail = (e) => toast({ title: t("err_title"), text: String(e), timeout: 7000 });
 
 /* ------------------------------------------------------------------ animacja sygnału */
 class SignalAnim {
@@ -134,14 +137,13 @@ class SignalAnim {
   }
   stop() { this.running = false; }
   kick() { this.kickUntil = performance.now() + 900; }
-  restart() { this.t0 = performance.now(); }
 
   /* poziom „muzyki” – suma kilku sinusów, żeby wskazówka żyła, ale nie szalała */
-  level(t) {
+  level(tt) {
     if (reduceMotion) return 0.62;
     const base = this.mode === "scan" ? 0.5 : this.mode === "calm" ? 0.42 : 0.56;
-    let v = base + 0.16 * Math.sin(t * 1.7) + 0.09 * Math.sin(t * 4.3 + 1.2) + 0.05 * Math.sin(t * 9.1);
-    if (this.mode === "scan") v += 0.12 * Math.sin(t * 6.0);
+    let v = base + 0.16 * Math.sin(tt * 1.7) + 0.09 * Math.sin(tt * 4.3 + 1.2) + 0.05 * Math.sin(tt * 9.1);
+    if (this.mode === "scan") v += 0.12 * Math.sin(tt * 6.0);
     if (performance.now() < this.kickUntil) v = 0.97;
     return Math.min(1, Math.max(0, v));
   }
@@ -149,14 +151,13 @@ class SignalAnim {
   frame(now) {
     const { ctx, w, h } = this;
     if (!w || !h) return;
-    const t = (now - this.t0) / 1000;
+    const tt = (now - this.t0) / 1000;
     ctx.clearRect(0, 0, w, h);
     const cx = w / 2, cy = h * 0.66;
     const R = Math.min(w * 0.36, h * 0.46);
-    const reveal = reduceMotion ? 1 : Math.min(1, t / 1.6);
+    const reveal = reduceMotion ? 1 : Math.min(1, tt / 1.6);
     const ease = 1 - Math.pow(1 - reveal, 3);
 
-    // łuk skali
     const a0 = Math.PI * 1.12, a1 = Math.PI * 1.88;
     ctx.lineCap = "round";
     ctx.lineWidth = Math.max(6, R * 0.035);
@@ -164,7 +165,6 @@ class SignalAnim {
     ctx.beginPath(); ctx.arc(cx, cy, R, a0, a1); ctx.stroke();
     ctx.strokeStyle = "rgba(240,82,79,0.85)";
     ctx.beginPath(); ctx.arc(cx, cy, R, a0 + (a1 - a0) * 0.8, a1); ctx.stroke();
-    // podziałka
     ctx.lineWidth = 2;
     for (let i = 0; i <= 10; i++) {
       const a = a0 + ((a1 - a0) * i) / 10;
@@ -176,7 +176,6 @@ class SignalAnim {
       ctx.stroke();
     }
 
-    // dwa sygnały płynące do środka
     const amp = Math.min(h * 0.07, 46);
     const drawWave = (fromLeft, color) => {
       ctx.strokeStyle = color;
@@ -187,10 +186,10 @@ class SignalAnim {
       for (let i = 0; i <= steps; i++) {
         const f = i / steps;
         const x = fromLeft ? f * span : w - f * span;
-        const d = Math.abs(x - cx) / cx; // 0 przy wskazówce
+        const d = Math.abs(x - cx) / cx;
         const env = Math.min(1, d * 3) * (0.55 + 0.45 * d);
-        const phase = (fromLeft ? 1 : -1) * x * 0.022 - t * 3.2 + (fromLeft ? 0 : 1.7);
-        const y = cy + Math.sin(phase) * amp * env * (0.7 + 0.3 * Math.sin(t * 0.9 + f * 3));
+        const phase = (fromLeft ? 1 : -1) * x * 0.022 - tt * 3.2 + (fromLeft ? 0 : 1.7);
+        const y = cy + Math.sin(phase) * amp * env * (0.7 + 0.3 * Math.sin(tt * 0.9 + f * 3));
         i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
       }
       ctx.stroke();
@@ -198,14 +197,13 @@ class SignalAnim {
     drawWave(true, "#5fc9b5");
     drawWave(false, "#eae3d2");
 
-    // podświetlenie łuku do poziomu i wskazówka na sprężynie (tłumienie ~0.8)
-    const lvl = reveal < 1 ? 0 : this.level(t);
-    const target = a0 + (a1 - a0) * lvl - Math.PI * 1.5; // względem pionu
+    // wskazówka na sprężynie (tłumienie ~0.8)
+    const lvl = reveal < 1 ? 0 : this.level(tt);
+    const target = a0 + (a1 - a0) * lvl - Math.PI * 1.5;
     if (reduceMotion) {
       this.angle = target;
     } else {
-      const k = 120, c = 2 * 0.8 * Math.sqrt(k); // sztywność i tłumienie
-      const dt = 1 / 60;
+      const k = 120, c = 2 * 0.8 * Math.sqrt(k), dt = 1 / 60;
       const acc = -k * (this.angle - target) - c * this.vel;
       this.vel += acc * dt;
       this.angle += this.vel * dt;
@@ -219,7 +217,6 @@ class SignalAnim {
     ctx.lineWidth = Math.max(6, R * 0.035);
     ctx.globalAlpha = ease;
     ctx.beginPath(); ctx.arc(cx, cy, R, a0, lit); ctx.stroke();
-
     ctx.strokeStyle = "#f3a73b";
     ctx.lineWidth = Math.max(4, R * 0.03);
     ctx.beginPath();
@@ -240,8 +237,32 @@ class SignalAnim {
   }
 }
 
+/* ------------------------------------------------------------------ język */
+function langSelect(id) {
+  return `<select class="input lang-select" id="${id}" aria-label="${esc(t("language"))}">${LANGS.map(
+    (l) => `<option value="${l.code}" ${l.code === lang() ? "selected" : ""}>${esc(l.name)}</option>`
+  ).join("")}</select>`;
+}
+async function changeLang(code) {
+  setLang(code);
+  S.cfg = await invoke("save_config", { cfg: { ...S.cfg, lang: code } });
+  applyStaticTexts();
+  // mod w REAPERze też dostanie nowy język przy następnym zapisie ustawień
+  if (S.reaper?.script_installed && S.cfg.nick) invoke("install_mod", { resource: S.reaper.resource, autostart: S.reaper.autostart }).catch(() => {});
+  if (!$("#onboard").hidden) obRender();
+  if (!$("#shell").hidden) { renderNav(); renderConn(); renderView(false); }
+}
+function applyStaticTexts() {
+  document.documentElement.lang = lang();
+  $("#city-a").textContent = t("city_a");
+  $("#city-b").textContent = t("city_b");
+}
+document.addEventListener("change", (e) => {
+  if (e.target.matches(".lang-select")) changeLang(e.target.value).catch(fail);
+});
+
 /* ------------------------------------------------------------------ instalator powitalny */
-const OB = { step: 0, anim: null, detect: null, mode: "join", report: null };
+const OB = { step: 0, anim: null, detect: null, mode: "join", report: null, draft: {} };
 const OB_STEPS = ["welcome", "search", "profile", "install", "done"];
 
 function obShow() {
@@ -260,12 +281,11 @@ function obRender() {
   const steps = {
     welcome: () => {
       body.innerHTML = `
-        <h1>Jeden projekt.<br>Dwa miasta.</h1>
-        <p>Sesja łączy Twojego REAPERa z REAPERem znajomych. Każde nagranie, przesunięty klip
-        i zmiana na ścieżce trafia do wszystkich – bez wysyłania plików.</p>
-        <p class="muted">Najpierw znajdę REAPERa i zainstaluję mod. To zajmie minutę.</p>`;
-      foot.innerHTML = `<span class="ver">Wersja ${esc(S.info.version)}</span>
-        <button class="btn primary big" data-ob="next">Zaczynamy</button>`;
+        <h1>${t("ob_title")}</h1>
+        <p>${t("ob_lead")}</p>
+        <p class="muted">${t("ob_lead2")}</p>`;
+      foot.innerHTML = `${langSelect("ob-lang")}
+        <button class="btn primary big" data-ob="next">${t("ob_start")}</button>`;
     },
     search: () => obSearch(body, foot),
     profile: () => obProfile(body, foot),
@@ -274,86 +294,84 @@ function obRender() {
       OB.anim.kick();
       body.innerHTML = `
         <svg class="tick" viewBox="0 0 72 72" fill="none" stroke="#5fc9b5" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="36" cy="36" r="33"/><path d="M23 37l9 9 18-19"/></svg>
-        <h2>Wszystko gotowe</h2>
-        <p>${OB.report ? "Mod jest zainstalowany. Otwórz REAPERa – okno Sesji pojawi się samo i połączy z pokojem „" + esc(S.cfg.room) + "”." : "Możesz zainstalować mod później w zakładce REAPER."}</p>
+        <h2>${t("ob_done_title")}</h2>
+        <p>${OB.report ? th("ob_done_text", { room: S.cfg.room }) : t("ob_done_later")}</p>
         ${OB.report?.warning ? `<div class="notice">${icon("alert")}<span>${esc(OB.report.warning)}</span></div>` : ""}`;
-      foot.innerHTML = `${OB.report && S.reaper?.exe ? `<button class="btn ghost" data-ob="launch">Otwórz REAPERa</button>` : "<span></span>"}
-        <button class="btn primary big" data-ob="finish">Przejdź do studia</button>`;
+      foot.innerHTML = `${OB.report && S.reaper?.exe ? `<button class="btn ghost" data-ob="launch">${t("open_reaper")}</button>` : "<span></span>"}
+        <button class="btn primary big" data-ob="finish">${t("ob_to_studio")}</button>`;
     },
   };
   steps[name]();
 }
 
 async function obSearch(body, foot) {
-  body.innerHTML = `<h2>Szukam REAPERa</h2>
-    <p>Sprawdzam typowe miejsca instalacji na tym komputerze.</p>
+  body.innerHTML = `<h2>${t("ob_search_title")}</h2>
+    <p>${t("ob_search_text")}</p>
     <div class="scan" id="scan"></div>`;
-  foot.innerHTML = `<button class="btn ghost" data-ob="back">Wstecz</button><div class="spinner"></div>`;
+  foot.innerHTML = `<button class="btn ghost" data-ob="back">${t("back")}</button><div class="spinner"></div>`;
   const started = performance.now();
   let info;
   try { info = await invoke("detect_reaper"); } catch (e) { info = { found: false, checked: [], error: String(e) }; }
   const scan = $("#scan");
-  const list = (info.checked || []).slice(0, 7);
-  for (let i = 0; i < list.length; i++) {
+  (info.checked || []).slice(0, 7).forEach((p, i) => {
     const d = document.createElement("div");
-    d.innerHTML = `${icon("search")}<span>${esc(list[i])}</span>`;
+    d.innerHTML = `${icon("search")}<span>${esc(p)}</span>`;
     d.style.animationDelay = `${i * 70}ms`;
     scan?.appendChild(d);
-  }
+  });
   // krótka pauza, żeby wynik nie „mignął” – wyszukiwanie zwykle trwa milisekundy
   await new Promise((r) => setTimeout(r, Math.max(0, 900 - (performance.now() - started))));
   OB.detect = info;
   S.reaper = info;
-  obSearchResult(body, foot, info);
+  if (OB_STEPS[OB.step] === "search") obSearchResult(body, foot, info);
 }
 
 function obSearchResult(body, foot, info) {
   if (info.found) {
     OB.anim.kick();
-    body.innerHTML = `<h2>Mamy go</h2>
+    body.innerHTML = `<h2>${t("ob_found_title")}</h2>
       <div class="found"><div class="ic">${icon("check")}</div><div>
-        <b>REAPER znaleziony${info.portable ? " (wersja przenośna)" : ""}</b>
-        <small>${esc(info.exe || "Folder ustawień: " + info.resource)}</small>
+        <b>${t(info.portable ? "ob_found_portable" : "ob_found")}</b>
+        <small>${esc(info.exe || t("settings_folder") + ": " + info.resource)}</small>
       </div></div>
-      ${info.script_installed ? `<p class="muted">Mod jest już zainstalowany (wersja ${esc(info.script_version || "?")}). Zaktualizuję go do ${esc(info.bundled_version)}.</p>` : ""}
-      <button class="btn ghost" data-ob="pick">${icon("folder")}To nie ten – wskaż inny folder</button>`;
-    foot.innerHTML = `<button class="btn ghost" data-ob="back">Wstecz</button><button class="btn primary big" data-ob="next">Dalej</button>`;
+      ${info.script_installed ? `<p class="muted">${th("ob_mod_present", { v: info.script_version || "?", nv: info.bundled_version })}</p>` : ""}
+      <button class="btn ghost" data-ob="pick">${icon("folder")}${t("ob_not_this")}</button>`;
+    foot.innerHTML = `<button class="btn ghost" data-ob="back">${t("back")}</button><button class="btn primary big" data-ob="next">${t("next")}</button>`;
   } else {
-    body.innerHTML = `<h2>Nie znaleziono REAPERa</h2>
+    body.innerHTML = `<h2>${t("ob_missing_title")}</h2>
       <div class="found miss"><div class="ic">${icon("x")}</div><div>
-        <b>REAPERa nie ma w typowych miejscach</b>
-        <small>Jeśli masz go zainstalowanego gdzie indziej (np. na innym dysku albo jako wersję przenośną), wskaż jego folder.</small>
+        <b>${t("ob_missing_head")}</b>
+        <small>${t("ob_missing_text")}</small>
       </div></div>
       <div class="row">
-        <button class="btn primary" data-ob="pick">${icon("folder")}Wskaż folder REAPERa</button>
-        <button class="btn ghost" data-url="${LINKS.reaperDownload}">${icon("download")}Pobierz REAPERa</button>
+        <button class="btn primary" data-ob="pick">${icon("folder")}${t("pick_reaper")}</button>
+        <button class="btn ghost" data-url="${LINKS.reaperDownload}">${icon("download")}${t("download_reaper")}</button>
       </div>`;
-    foot.innerHTML = `<button class="btn ghost" data-ob="back">Wstecz</button>
-      <div class="row"><button class="btn ghost" data-ob="retry">${icon("refresh")}Szukaj ponownie</button>
-      <button class="btn ghost" data-ob="skip">Pomiń na razie</button></div>`;
+    foot.innerHTML = `<button class="btn ghost" data-ob="back">${t("back")}</button>
+      <div class="row"><button class="btn ghost" data-ob="retry">${icon("refresh")}${t("search_again")}</button>
+      <button class="btn ghost" data-ob="skip">${t("skip_for_now")}</button></div>`;
   }
 }
 
 function obProfile(body, foot) {
   // zachowaj to, co użytkownik już wpisał, przy przełączaniu trybu
   const keep = (id, key) => { const el = document.getElementById(id); if (el) OB.draft[key] = el.value; };
-  OB.draft = OB.draft || {};
   keep("ob-nick", "nick"); keep("ob-room", "room"); keep("ob-server", "server"); keep("ob-pass", "pass");
-  const c = { ...S.cfg, ...Object.fromEntries(Object.entries(OB.draft).filter(([k]) => k !== "pass")) };
-  if (OB.draft.pass !== undefined) { c.password = OB.draft.pass; c.host_password = OB.draft.pass; }
-  OB.mode = OB.mode || "join";
-  body.innerHTML = `<h2>Kim jesteś w sesji?</h2>
-    <label class="field"><span>Twój nick</span><input class="input" id="ob-nick" maxlength="40" placeholder="np. Ania" value="${esc(c.nick)}"></label>
+  const c = { ...S.cfg };
+  for (const k of ["nick", "room", "server"]) if (OB.draft[k] !== undefined) c[k] = OB.draft[k];
+  const pass = OB.draft.pass !== undefined ? OB.draft.pass : OB.mode === "host" ? c.host_password : c.password;
+  body.innerHTML = `<h2>${t("ob_profile_title")}</h2>
+    <label class="field"><span>${t("nick")}</span><input class="input" id="ob-nick" maxlength="40" placeholder="${esc(t("nick_ph"))}" value="${esc(c.nick)}"></label>
     <div class="modes">
-      <button class="mode ${OB.mode === "host" ? "on" : ""}" data-ob="mode-host"><b>Zakładam sesję</b><small>Serwer działa w tej aplikacji, znajomi łączą się do Ciebie</small></button>
-      <button class="mode ${OB.mode === "join" ? "on" : ""}" data-ob="mode-join"><b>Dołączam</b><small>Mam adres od osoby, która założyła sesję</small></button>
+      <button class="mode ${OB.mode === "host" ? "on" : ""}" data-ob="mode-host"><b>${t("mode_host")}</b><small>${t("mode_host_text")}</small></button>
+      <button class="mode ${OB.mode === "join" ? "on" : ""}" data-ob="mode-join"><b>${t("mode_join")}</b><small>${t("mode_join_text")}</small></button>
     </div>
-    ${OB.mode === "join" ? `<label class="field"><span>Adres serwera</span><input class="input" id="ob-server" placeholder="http://100.101.102.103:8765" value="${esc(c.server)}"><small>Dostaniesz go od osoby, która założyła sesję.</small></label>` : ""}
+    ${OB.mode === "join" ? `<label class="field"><span>${t("server_addr")}</span><input class="input" id="ob-server" placeholder="http://100.101.102.103:8765" value="${esc(c.server)}"><small>${t("server_addr_hint")}</small></label>` : ""}
     <div class="form-grid">
-      <label class="field"><span>Pokój</span><input class="input" id="ob-room" placeholder="nasz_kawalek" value="${esc(c.room)}"><small>Litery, cyfry, - _ .</small></label>
-      <label class="field"><span>Hasło (opcjonalne)</span><input class="input" id="ob-pass" type="password" value="${esc(OB.mode === "host" ? c.host_password : c.password)}"></label>
+      <label class="field"><span>${t("room")}</span><input class="input" id="ob-room" placeholder="${esc(t("room_ph"))}" value="${esc(c.room)}"><small>${t("room_hint")}</small></label>
+      <label class="field"><span>${t("password_opt")}</span><input class="input" id="ob-pass" type="password" value="${esc(pass)}"></label>
     </div>`;
-  foot.innerHTML = `<button class="btn ghost" data-ob="back">Wstecz</button><button class="btn primary big" data-ob="profile-save">Dalej</button>`;
+  foot.innerHTML = `<button class="btn ghost" data-ob="back">${t("back")}</button><button class="btn primary big" data-ob="profile-save">${t("next")}</button>`;
   setTimeout(() => $("#ob-nick")?.focus(), 50);
 }
 
@@ -361,8 +379,8 @@ async function obProfileSave() {
   const nick = $("#ob-nick").value.trim();
   const room = $("#ob-room").value.trim();
   const pass = $("#ob-pass").value.trim();
-  if (!nick) return toast({ title: "Podaj swój nick", text: "Po nim inni zobaczą, co dodajesz do projektu." });
-  if (!room) return toast({ title: "Podaj nazwę pokoju", text: "Wszyscy w tym samym pokoju pracują nad jednym projektem." });
+  if (!nick) return toast({ title: t("need_nick"), text: t("need_nick_text") });
+  if (!room) return toast({ title: t("need_room"), text: t("need_room_text") });
   const cfg = { ...S.cfg, nick, room };
   if (OB.mode === "host") {
     cfg.host_password = pass;
@@ -371,7 +389,7 @@ async function obProfileSave() {
     cfg.host_on_start = true;
   } else {
     const server = $("#ob-server").value.trim();
-    if (!server) return toast({ title: "Podaj adres serwera", text: "Dostaniesz go od osoby, która założyła sesję." });
+    if (!server) return toast({ title: t("need_server"), text: t("server_addr_hint") });
     cfg.server = server;
     cfg.password = pass;
   }
@@ -385,37 +403,36 @@ async function obProfileSave() {
 
 function obInstall(body, foot) {
   const info = OB.detect;
-  body.innerHTML = `<h2>Instaluję mod do REAPERa</h2>
-    <p>Do folderu REAPERa trafią:</p>
+  body.innerHTML = `<h2>${t("ob_install_title")}</h2>
+    <p>${t("ob_install_text")}</p>
     <div class="checklist" id="ob-check">
-      <div data-k="script">${icon("check")}<span>Skrypt REAPER Multiplayer ${esc(info.bundled_version)}</span></div>
-      <div data-k="action">${icon("check")}<span>Akcja „Sesja – REAPER Multiplayer” w menu Actions</span></div>
-      <div data-k="settings">${icon("check")}<span>Twój nick i adres sesji, żeby mod łączył się sam</span></div>
+      <div>${icon("check")}<span>${th("ob_inst_script", { v: info.bundled_version })}</span></div>
+      <div>${icon("check")}<span>${t("ob_inst_action")}</span></div>
+      <div>${icon("check")}<span>${t("ob_inst_settings")}</span></div>
     </div>
-    <label class="switch"><input type="checkbox" id="ob-auto" ${S.cfg.autostart_script ? "checked" : ""}><i></i><span>Otwieraj okno Sesji razem z REAPERem</span></label>
-    ${info.running ? `<div class="notice">${icon("alert")}<span>REAPER jest teraz otwarty. Zamknij go przed instalacją, żeby zapisał nowe ustawienia.</span></div>` : ""}`;
-  foot.innerHTML = `<button class="btn ghost" data-ob="back">Wstecz</button><button class="btn primary big" data-ob="install">Zainstaluj</button>`;
+    <label class="switch"><input type="checkbox" id="ob-auto" ${S.cfg.autostart_script ? "checked" : ""}><i></i><span>${t("autostart")}</span></label>
+    ${info.running ? `<div class="notice">${icon("alert")}<span>${t("ob_close_reaper")}</span></div>` : ""}`;
+  foot.innerHTML = `<button class="btn ghost" data-ob="back">${t("back")}</button><button class="btn primary big" data-ob="install">${t("install")}</button>`;
 }
 
 async function obDoInstall(btn) {
   btn.disabled = true;
-  btn.innerHTML = `<div class="spinner"></div>Instaluję`;
+  btn.innerHTML = `<div class="spinner"></div>${t("installing")}`;
   try {
-    const autostart = $("#ob-auto").checked;
-    const rep = await invoke("install_mod", { resource: OB.detect.resource, autostart });
+    const rep = await invoke("install_mod", { resource: OB.detect.resource, autostart: $("#ob-auto").checked });
     OB.report = rep;
     S.reaper = rep.info;
     const rows = [...document.querySelectorAll("#ob-check div")];
-    for (let i = 0; i < rows.length; i++) {
+    for (const row of rows) {
       await new Promise((r) => setTimeout(r, 160));
-      rows[i].classList.add("done");
+      row.classList.add("done");
     }
     await new Promise((r) => setTimeout(r, 350));
     OB.step = 4;
     obRender();
   } catch (e) {
     btn.disabled = false;
-    btn.textContent = "Spróbuj ponownie";
+    btn.textContent = t("try_again");
     fail(e);
   }
 }
@@ -454,22 +471,22 @@ async function obAction(act, el) {
 
 /* ------------------------------------------------------------------ nawigacja */
 const VIEWS = [
-  { id: "studio", label: "Studio", icon: "studio" },
-  { id: "chat", label: "Wiadomości", icon: "chat" },
-  { id: "music", label: "Nagrania", icon: "music" },
-  { id: "comments", label: "Komentarze", icon: "comment" },
+  { id: "studio", label: "nav_studio", icon: "studio" },
+  { id: "chat", label: "nav_chat", icon: "chat" },
+  { id: "music", label: "nav_music", icon: "music" },
+  { id: "comments", label: "nav_comments", icon: "comment" },
   "sep",
-  { id: "reaper", label: "REAPER", icon: "reaper" },
-  { id: "changes", label: "Zmiany", icon: "changes" },
-  { id: "support", label: "Wspieraj", icon: "heart" },
-  { id: "settings", label: "Ustawienia", icon: "settings" },
+  { id: "reaper", label: "nav_reaper", icon: "reaper" },
+  { id: "changes", label: "nav_changes", icon: "changes" },
+  { id: "support", label: "nav_support", icon: "heart" },
+  { id: "settings", label: "nav_settings", icon: "settings" },
 ];
 
 function renderNav() {
   $("#nav").innerHTML = VIEWS.map((v) =>
     v === "sep"
       ? `<div class="nav-sep"></div>`
-      : `<button class="nav ${S.view === v.id ? "on" : ""}" data-view="${v.id}">${icon(v.icon)}<span>${v.label}</span>${
+      : `<button class="nav ${S.view === v.id ? "on" : ""}" data-view="${v.id}">${icon(v.icon)}<span>${t(v.label)}</span>${
           v.id === "chat" && S.unread ? `<span class="badge">${S.unread > 99 ? "99+" : S.unread}</span>` : ""
         }</button>`
   ).join("");
@@ -478,8 +495,8 @@ function renderNav() {
 function renderConn() {
   const s = S.session;
   const st = s ? s.status : "off";
-  const label = { on: "Połączono", connecting: "Łączenie", error: "Brak połączenia", off: "Rozłączono" }[st];
-  $("#conn").innerHTML = `<span class="dot ${st}"></span><div><b>${label}</b><small>${esc(s ? `Pokój ${s.room}` : S.host.running ? "Serwer działa" : "Nie jesteś w sesji")}</small></div>`;
+  const sub = s ? th("room_n", { room: s.room }) : S.host.running ? t("server_running") : t("not_in_session");
+  $("#conn").innerHTML = `<span class="dot ${st}"></span><div><b>${statusLabel(st)}</b><small>${sub}</small></div>`;
   $("#ver").textContent = `Sesja ${S.info.version} · mod ${S.info.mod_version}`;
 }
 
@@ -506,8 +523,9 @@ function renderView(animate) {
 /* aktualizacja widoku po zmianie stanu sesji – bez przebudowy pól formularzy */
 function refreshView() {
   const r = REFRESH[S.view];
-  if (r) r();
-  else if (!document.activeElement || !$("#view").contains(document.activeElement) || document.activeElement === document.body) {
+  if (r) return r();
+  const a = document.activeElement;
+  if (!a || a === document.body || !$("#view").contains(a)) {
     $("#view").innerHTML = (RENDER[S.view] || RENDER.studio)();
     AFTER[S.view]?.();
   }
@@ -518,9 +536,12 @@ const RENDER = {};
 const AFTER = {};
 const REFRESH = {};
 
-function noSession(title, text) {
-  return `<div class="panel empty">${icon("users")}<b>${esc(title)}</b><span>${esc(text)}</span>
-    <button class="btn primary" data-view="studio">Przejdź do studia</button></div>`;
+const head = (title, text = "", actions = "") =>
+  `<div class="head"><div><h1>${title}</h1>${text ? `<p>${text}</p>` : ""}</div>${actions ? `<div class="actions">${actions}</div>` : ""}</div>`;
+
+function noSession(text) {
+  return `<div class="panel empty">${icon("users")}<b>${t("no_session")}</b><span>${text}</span>
+    <button class="btn primary" data-view="studio">${t("go_studio")}</button></div>`;
 }
 
 RENDER.studio = () => {
@@ -531,48 +552,47 @@ RENDER.studio = () => {
       <div>
         <h1 class="room-title">${esc(s.room)}</h1>
         <div class="room-sub">
-          <span class="pill"><span class="dot ${s.status}"></span>${{ on: "Połączono", connecting: "Łączenie", error: "Brak połączenia" }[s.status] || ""}</span>
+          <span class="pill"><span class="dot ${s.status}"></span>${statusLabel(s.status)}</span>
           <span>${esc(s.server)}</span>
         </div>
       </div>
       <div class="actions">
-        ${S.reaper?.exe ? `<button class="btn ghost" data-act="launch">${icon("reaper")}Otwórz REAPERa</button>` : ""}
-        <button class="btn ghost" data-act="disconnect">Rozłącz</button>
+        ${S.reaper?.exe ? `<button class="btn ghost" data-act="launch">${icon("reaper")}${t("open_reaper")}</button>` : ""}
+        <button class="btn ghost" data-act="disconnect">${t("disconnect")}</button>
       </div>
     </div>
     ${s.error ? `<div class="notice" style="margin-bottom:18px">${icon("alert")}<span>${esc(s.error)}</span></div>` : ""}
     <div class="studio-grid">
       <div class="stack">
-        <section class="panel"><h2>W sesji <span class="muted" id="people-n"></span></h2><div class="people" id="people"></div></section>
-        <section class="panel"><h2>Ścieżki <span class="muted" id="tracks-n"></span></h2><div class="tracks" id="tracks"></div></section>
+        <section class="panel"><h2>${t("in_session")} <span class="muted" id="people-n"></span></h2><div class="people" id="people"></div></section>
+        <section class="panel"><h2>${t("tracks")} <span class="muted" id="tracks-n"></span></h2><div class="tracks" id="tracks"></div></section>
       </div>
-      <section class="panel"><h2>Co się dzieje</h2><div class="feed" id="feed"></div></section>
+      <section class="panel"><h2>${t("activity")}</h2><div class="feed" id="feed"></div></section>
     </div>
     ${S.host.running ? `<div style="margin-top:18px">${hostPanel()}</div>` : ""}`;
 };
 
 function studioEmpty() {
   return `
-    <div class="head"><div><h1>Studio</h1><p>Załóż sesję u siebie albo dołącz do kogoś, kto już ją prowadzi.</p></div></div>
+    ${head(t("nav_studio"), t("studio_empty_lead"))}
     ${S.host.running ? `<div style="margin-bottom:18px">${hostPanel()}</div>` : ""}
     <div class="choice-grid">
       <section class="panel choice">
-        ${icon("server").replace("<svg", '<svg style="width:28px;height:28px;color:var(--amber)"')}
-        <h3>Zakładam sesję</h3>
-        <p>Serwer uruchomi się w tej aplikacji. Wyślesz znajomym adres, a oni połączą się do Ciebie.
-        Przez internet najprościej działa to z Tailscale.</p>
-        <button class="btn primary" data-act="host-and-join">${S.host.running ? "Dołącz do własnej sesji" : "Uruchom serwer i dołącz"}</button>
+        ${icon("server", "width:28px;height:28px;color:var(--amber)")}
+        <h3>${t("mode_host")}</h3>
+        <p>${t("host_text")}</p>
+        <button class="btn primary" data-act="host-and-join">${t(S.host.running ? "join_own" : "start_and_join")}</button>
       </section>
       <section class="panel choice">
-        ${icon("link").replace("<svg", '<svg style="width:28px;height:28px;color:var(--signal)"')}
-        <h3>Dołączam do sesji</h3>
-        <p>Wpisz adres od osoby, która założyła sesję, i nazwę pokoju.</p>
+        ${icon("link", "width:28px;height:28px;color:var(--signal)")}
+        <h3>${t("join_title")}</h3>
+        <p>${t("join_text")}</p>
         <div class="field"><input class="input" id="join-server" placeholder="http://100.101.102.103:8765" value="${esc(S.cfg.server)}"></div>
         <div class="form-grid">
-          <input class="input" id="join-room" placeholder="pokój" value="${esc(S.cfg.room)}">
-          <input class="input" id="join-pass" type="password" placeholder="hasło (opcjonalne)" value="${esc(S.cfg.password)}">
+          <input class="input" id="join-room" placeholder="${esc(t("room"))}" value="${esc(S.cfg.room)}">
+          <input class="input" id="join-pass" type="password" placeholder="${esc(t("password_opt"))}" value="${esc(S.cfg.password)}">
         </div>
-        <button class="btn primary" data-act="join">Dołącz</button>
+        <button class="btn primary" data-act="join">${t("join")}</button>
       </section>
     </div>`;
 }
@@ -580,55 +600,56 @@ function studioEmpty() {
 function hostPanel() {
   const a = S.host.addresses || [];
   return `<section class="panel">
-    <h2>${icon("server").replace("<svg", '<svg style="width:18px;height:18px;color:var(--amber)"')}Twój serwer działa <span class="muted">port ${S.host.port}</span></h2>
-    <p class="muted">Wyślij znajomym jeden z tych adresów. Spoza Twojej sieci zadziała adres Tailscale.</p>
-    ${a.map((x) => `<div class="addr"><code>${esc(x.url)}</code><small>${esc(x.kind)}</small>
-      <button class="btn icon ghost" title="Kopiuj" data-copy="${esc(x.url)}">${icon("copy")}</button></div>`).join("")}
-    <div class="row" style="margin-top:14px"><button class="btn danger" data-act="host-stop">Zatrzymaj serwer</button></div>
+    <h2>${icon("server", "width:18px;height:18px;color:var(--amber)")}${t("host_running")} <span class="muted">${th("port_n", { port: S.host.port })}</span></h2>
+    <p class="muted">${t("host_share")}</p>
+    ${a.map((x) => `<div class="addr"><code>${esc(x.url)}</code><small>${esc(t("net_" + x.kind))}</small>
+      <button class="btn icon ghost" title="${esc(t("copy"))}" data-copy="${esc(x.url)}">${icon("copy")}</button></div>`).join("")}
+    <div class="row" style="margin-top:14px"><button class="btn danger" data-act="host-stop">${t("stop_server")}</button></div>
   </section>`;
 }
 
 function peopleHtml(s) {
   const users = s.users || [];
-  if (!users.length) return `<div class="empty">Nikogo jeszcze nie ma. Otwórz REAPERa – pojawisz się tutaj.</div>`;
+  if (!users.length) return `<div class="empty">${t("nobody_yet")}</div>`;
   return users.map((u) => {
-    const state = u.app ? `<span class="state">w aplikacji</span>`
-      : u.rec ? `<span class="state rec">nagrywa · ${fmtPos(u.pos)}</span>`
-      : u.play ? `<span class="state">${icon("play").replace("<svg", '<svg style="width:12px;height:12px"')}${fmtPos(u.pos)}</span>`
+    const state = u.app ? `<span class="state">${t("in_app")}</span>`
+      : u.rec ? `<span class="state rec">${th("recording_at", { pos: fmtPos(u.pos) })}</span>`
+      : u.play ? `<span class="state">${icon("play", "width:12px;height:12px")}${fmtPos(u.pos)}</span>`
       : `<span class="state num">${fmtPos(u.pos)}</span>`;
+    const where = u.sel ? th("on_track", { name: u.sel }) : u.app ? "Sesja" : "REAPER";
     return `<div class="person"><div class="avatar" style="background:${esc(u.color)}">${initial(u.name)}</div>
-      <div><b>${esc(u.name)}${u.name === s.me ? " (Ty)" : ""}</b><small>${esc(u.sel ? "ścieżka „" + u.sel + "”" : u.app ? "Sesja" : "REAPER")}</small></div>${state}</div>`;
+      <div><b>${esc(u.name)}${u.name === s.me ? ` (${t("you")})` : ""}</b><small>${where}</small></div>${state}</div>`;
   }).join("");
 }
 
 function tracksHtml(s) {
-  if (!s.tracks.length) return `<div class="empty">Projekt jest pusty. Dodaj ścieżkę w REAPERze, a zobaczysz ją tutaj.</div>`;
+  if (!s.tracks.length) return `<div class="empty">${t("tracks_empty")}</div>`;
   const count = {};
   for (const it of s.items) count[it.track] = (count[it.track] || 0) + 1;
-  return s.tracks.map((t) => `<div class="track"><div class="bar" style="background:${esc(colorOf(t.author))}"></div>
-    <div><b>${esc(t.name)}</b><small>autor: ${esc(t.author)}${t.editor && t.editor !== t.author ? ` · ostatnie zmiany: ${esc(t.editor)}` : ""}</small></div>
-    <span class="n num">${count[t.guid] || 0} ${plural(count[t.guid] || 0, "klip", "klipy", "klipów")}</span></div>`).join("");
+  return s.tracks.map((tr) => `<div class="track"><div class="bar" style="background:${esc(colorOf(tr.author))}"></div>
+    <div><b>${esc(tr.name)}</b><small>${th("author_n", { name: tr.author })}${tr.editor && tr.editor !== tr.author ? ` · ${th("edited_by", { name: tr.editor })}` : ""}</small></div>
+    <span class="n num">${tn("clips", count[tr.guid] || 0)}</span></div>`).join("");
 }
 
-function plural(n, one, few, many) {
-  if (n === 1) return one;
-  const d = n % 10, dd = n % 100;
-  return d >= 2 && d <= 4 && (dd < 12 || dd > 14) ? few : many;
-}
+function feedKey(e) { return `${e.ts}|${e.user}|${e.kind}|${e.action || ""}|${e.name || ""}|${e.text}`; }
 
-function feedKey(e) { return `${e.ts}|${e.user}|${e.kind}|${e.text}`; }
+/* zdanie opisujące wpis aktywności, np. „dodaje klip „wokal” na ścieżce „Wokal” @ 0:12” */
+function actText(e) {
+  if (e.kind === "comment") {
+    return th(e.item_name ? "act_comment_item" : "act_comment", { item: e.item_name, pos: fmtPos(e.pos), text: e.text });
+  }
+  if (e.kind === "chat") return esc(e.text);
+  const p = { name: e.name || "?", track: e.track || "?", pos: fmtPos(e.pos), bpm: (e.bpm || 0).toFixed(2) };
+  return th("act_" + (e.action || "unknown"), p);
+}
 
 function feedHtml(s) {
   const list = s.feed.filter((e) => e.kind !== "chat").slice(-120).reverse();
-  if (!list.length) return `<div class="empty">Tu zobaczysz, kto co dodaje i zmienia w projekcie.</div>`;
+  if (!list.length) return `<div class="empty">${t("activity_empty")}</div>`;
   return list.map((e) => {
-    const k = feedKey(e);
-    const fresh = S.seenKeys.size && !S.seenKeys.has(k);
-    const text = e.kind === "comment"
-      ? `komentuje${e.item_name ? ` „${esc(e.item_name)}”` : ""} @ ${fmtPos(e.pos)}: ${esc(e.text)}`
-      : esc(e.text);
+    const fresh = S.seenKeys.size && !S.seenKeys.has(feedKey(e));
     return `<div class="ev ${e.kind} ${fresh ? "fresh" : ""}"><time class="num">${fmtClock(e.ts)}</time>
-      <div><b style="color:${esc(colorOf(e.user))}">${esc(e.user)}</b> <span class="t">${text}</span></div></div>`;
+      <div><b style="color:${esc(colorOf(e.user))}">${esc(e.user)}</b> <span class="t">${actText(e)}</span></div></div>`;
   }).join("");
 }
 
@@ -641,25 +662,25 @@ REFRESH.studio = () => {
   $("#tracks-n").textContent = s.tracks.length ? String(s.tracks.length) : "";
   $("#feed").innerHTML = feedHtml(s);
   const pill = document.querySelector(".room-sub .pill");
-  if (pill) pill.innerHTML = `<span class="dot ${s.status}"></span>${{ on: "Połączono", connecting: "Łączenie", error: "Brak połączenia" }[s.status] || ""}`;
+  if (pill) pill.innerHTML = `<span class="dot ${s.status}"></span>${statusLabel(s.status)}`;
 };
 AFTER.studio = () => S.session && REFRESH.studio();
 
 /* --- czat --- */
 RENDER.chat = () => {
-  if (!S.session) return `<div class="head"><div><h1>Wiadomości</h1></div></div>` + noSession("Nie jesteś w sesji", "Połącz się z sesją, żeby pisać z pozostałymi.");
-  return `<div class="head"><div><h1>Wiadomości</h1><p>Czat widzą wszyscy w pokoju – także w oknie Sesji w REAPERze.</p></div></div>
+  if (!S.session) return head(t("nav_chat")) + noSession(t("chat_no_session"));
+  return `${head(t("nav_chat"), t("chat_lead"))}
     <div class="chat"><div class="msgs" id="msgs"></div>
-      <form class="composer" id="chat-form"><input class="input" id="chat-input" maxlength="1000" placeholder="Napisz wiadomość" autocomplete="off">
-      <button class="btn primary">${icon("send")}Wyślij</button></form></div>`;
+      <form class="composer" id="chat-form"><input class="input" id="chat-input" maxlength="1000" placeholder="${esc(t("chat_ph"))}" autocomplete="off">
+      <button class="btn primary">${icon("send")}${t("send")}</button></form></div>`;
 };
 function msgsHtml(s) {
   const list = s.feed.filter((e) => e.kind === "chat" || e.kind === "comment");
-  if (!list.length) return `<div class="empty">${icon("chat")}Napisz pierwszą wiadomość.</div>`;
+  if (!list.length) return `<div class="empty">${icon("chat")}${t("chat_empty")}</div>`;
   return list.map((e) => {
     const fresh = S.seenKeys.size && !S.seenKeys.has(feedKey(e));
     if (e.kind === "comment") {
-      return `<div class="msg note ${fresh ? "fresh" : ""}"><div class="bubble">${esc(e.user)} komentuje${e.item_name ? ` „${esc(e.item_name)}”` : ""} @ ${fmtPos(e.pos)}: ${esc(e.text)}</div></div>`;
+      return `<div class="msg note ${fresh ? "fresh" : ""}"><div class="bubble">${esc(e.user)} ${actText(e)}</div></div>`;
     }
     return `<div class="msg ${e.mine ? "mine" : ""} ${fresh ? "fresh" : ""}"><div class="who"><b style="color:${esc(colorOf(e.user))}">${esc(e.user)}</b><span class="num">${fmtClock(e.ts)}</span></div>
       <div class="bubble">${esc(e.text)}</div></div>`;
@@ -690,23 +711,21 @@ AFTER.chat = () => {
 
 /* --- nagrania --- */
 RENDER.music = () => {
-  if (!S.session) return `<div class="head"><div><h1>Nagrania</h1></div></div>` + noSession("Nie jesteś w sesji", "Tutaj pojawią się wszystkie nagrania z projektu.");
-  return `<div class="head"><div><h1>Nagrania</h1><p>Wszystkie klipy audio z projektu. Posłuchaj, kto co nagrał, bez otwierania REAPERa.</p></div></div>
-    <div class="filters" id="filters"></div><div class="clips" id="clips"></div>`;
+  if (!S.session) return head(t("nav_music")) + noSession(t("music_no_session"));
+  return `${head(t("nav_music"), t("music_lead"))}<div class="filters" id="filters"></div><div class="clips" id="clips"></div>`;
 };
 function musicItems() {
-  const s = S.session;
-  return s.items.filter((i) => i.file && !i.midi && (!S.musicFilter || i.author === S.musicFilter));
+  return S.session.items.filter((i) => i.file && !i.midi && (!S.musicFilter || i.author === S.musicFilter));
 }
 REFRESH.music = () => {
   const s = S.session;
   if (!s || !$("#clips")) return renderView(false);
   const authors = [...new Set(s.items.filter((i) => i.file && !i.midi).map((i) => i.author))];
   $("#filters").innerHTML = authors.length > 1
-    ? `<button class="chip ${!S.musicFilter ? "on" : ""}" data-filter="">Wszyscy</button>` +
+    ? `<button class="chip ${!S.musicFilter ? "on" : ""}" data-filter="">${t("everyone")}</button>` +
       authors.map((a) => `<button class="chip ${S.musicFilter === a ? "on" : ""}" data-filter="${esc(a)}"><i style="background:${esc(colorOf(a))}"></i>${esc(a)}</button>`).join("")
     : "";
-  const tname = Object.fromEntries(s.tracks.map((t) => [t.guid, t.name]));
+  const tname = Object.fromEntries(s.tracks.map((tr) => [tr.guid, tr.name]));
   const items = musicItems();
   const box = $("#clips");
   const ids = items.map((i) => i.guid).join(",");
@@ -714,12 +733,12 @@ REFRESH.music = () => {
   box.dataset.ids = ids;
   box.innerHTML = items.length ? items.map((it) => `
     <div class="clip" data-guid="${esc(it.guid)}">
-      <button class="play ${S.audio.id === it.file ? "on" : ""}" data-play="${esc(it.file)}" aria-label="Odtwórz">${icon(S.audio.id === it.file && !S.audio.el.paused ? "pause" : "play")}</button>
+      <button class="play ${S.audio.id === it.file ? "on" : ""}" data-play="${esc(it.file)}" aria-label="${esc(t("play"))}">${icon(S.audio.id === it.file && !S.audio.el.paused ? "pause" : "play")}</button>
       <div><b>${esc(it.name)}</b><small>${esc(tname[it.track] || "?")} · ${fmtPos(it.pos)}</small></div>
-      <canvas class="wave" data-wave="${esc(it.file)}" data-len="${it.len}"></canvas>
+      <canvas class="wave" data-wave="${esc(it.file)}"></canvas>
       <div class="meta"><span class="by"><i style="background:${esc(colorOf(it.author))}"></i>${esc(it.author)}</span><span class="num">${fmtPos(it.len)} · ${fmtClock(it.created)}</span></div>
     </div>`).join("")
-    : `<div class="panel empty">${icon("music")}Nie ma jeszcze nagrań audio. Nagraj coś w REAPERze – pojawi się tutaj.</div>`;
+    : `<div class="panel empty">${icon("music")}${t("music_empty")}</div>`;
   drawAllWaves();
 };
 AFTER.music = () => S.session && REFRESH.music();
@@ -787,7 +806,7 @@ async function togglePlay(id, btn) {
     a.el.pause();
     a.id = null;
     syncPlayButtons();
-    toast({ title: "Nie mogę odtworzyć tego nagrania", text: "Sprawdź, czy komputer ma działające wyjście audio. Nagranie możesz też odsłuchać w REAPERze.", timeout: 6000 });
+    toast({ title: t("cant_play"), text: t("cant_play_text"), timeout: 6000 });
   });
 }
 S.audio.el.addEventListener("play", () => { syncPlayButtons(); tickAudio(); });
@@ -813,17 +832,17 @@ function tickAudio() {
 
 /* --- komentarze --- */
 RENDER.comments = () => {
-  if (!S.session) return `<div class="head"><div><h1>Komentarze</h1></div></div>` + noSession("Nie jesteś w sesji", "Komentarze przypinasz do miejsca w utworze albo do konkretnego klipu.");
+  if (!S.session) return head(t("nav_comments")) + noSession(t("comments_no_session"));
   const s = S.session;
-  const tname = Object.fromEntries(s.tracks.map((t) => [t.guid, t.name]));
+  const tname = Object.fromEntries(s.tracks.map((tr) => [tr.guid, tr.name]));
   const items = [...s.items].sort((a, b) => a.pos - b.pos);
-  return `<div class="head"><div><h1>Komentarze</h1><p>Przypnij uwagę do miejsca w utworze albo do konkretnego klipu, np. wokalu. W REAPERze pojawi się jako znacznik.</p></div></div>
+  return `${head(t("nav_comments"), t("comments_lead"))}
     <form class="panel cmt-form" id="cmt-form">
-      <label class="field"><span>Komentarz</span><input class="input" id="cmt-text" maxlength="500" placeholder="np. w refrenie wejdź pół taktu później"></label>
-      <label class="field"><span>Klip</span><select class="input" id="cmt-item"><option value="">Cały utwór</option>
+      <label class="field"><span>${t("comment")}</span><input class="input" id="cmt-text" maxlength="500" placeholder="${esc(t("comment_ph"))}"></label>
+      <label class="field"><span>${t("clip")}</span><select class="input" id="cmt-item"><option value="">${t("whole_song")}</option>
         ${items.map((i) => `<option value="${esc(i.guid)}" data-pos="${i.pos}" data-name="${esc(i.name)}">${esc(i.name)} (${esc(tname[i.track] || "?")})</option>`).join("")}</select></label>
-      <label class="field"><span>Miejsce</span><input class="input num" id="cmt-pos" value="0:00" placeholder="1:23"></label>
-      <button class="btn primary">Dodaj</button>
+      <label class="field"><span>${t("position")}</span><input class="input num" id="cmt-pos" value="0:00" placeholder="1:23"></label>
+      <button class="btn primary">${t("add")}</button>
     </form>
     <div class="cmts" id="cmts"></div>`;
 };
@@ -833,11 +852,11 @@ REFRESH.comments = () => {
   const list = [...S.session.comments].reverse();
   box.innerHTML = list.length ? list.map((c) => `
     <div class="cmt"><div class="avatar" style="background:${esc(colorOf(c.user))}">${initial(c.user)}</div>
-      <div><div class="where">${c.item_name ? `Klip „${esc(c.item_name)}” · ` : ""}${fmtPos(c.pos)}</div>
+      <div><div class="where">${c.item_name ? `${th("clip_n", { name: c.item_name })} · ` : ""}${fmtPos(c.pos)}</div>
       <div class="body">${esc(c.text)}</div><small>${esc(c.user)} · ${fmtClock(c.ts)}</small></div>
-      ${c.mine ? `<button class="btn icon ghost" title="Usuń komentarz" data-del-comment="${esc(c.id)}">${icon("x")}</button>` : "<span></span>"}
+      ${c.mine ? `<button class="btn icon ghost" title="${esc(t("delete_comment"))}" data-del-comment="${esc(c.id)}">${icon("x")}</button>` : "<span></span>"}
     </div>`).join("")
-    : `<div class="panel empty">${icon("comment")}Brak komentarzy. Dodaj pierwszy – np. do wokalu, który trzeba poprawić.</div>`;
+    : `<div class="panel empty">${icon("comment")}${t("comments_empty")}</div>`;
 };
 AFTER.comments = () => {
   if (!S.session) return;
@@ -854,7 +873,7 @@ AFTER.comments = () => {
     try {
       await invoke("send_comment", { text, pos: parsePos($("#cmt-pos").value), item: o.value || null, itemName: o.value ? o.dataset.name : null });
       $("#cmt-text").value = "";
-      toast({ title: "Komentarz dodany", text: "Zobaczą go wszyscy w pokoju." });
+      toast({ title: t("comment_added"), text: t("comment_added_text") });
     } catch (err) { fail(err); }
   });
 };
@@ -863,37 +882,34 @@ AFTER.comments = () => {
 RENDER.reaper = () => {
   const r = S.reaper || {};
   const upToDate = r.script_installed && r.script_version === r.bundled_version;
-  return `<div class="head"><div><h1>REAPER</h1><p>Mod REAPER Multiplayer synchronizuje projekt i pokazuje okno Sesji w REAPERze.</p></div>
-      <div class="actions"><button class="btn ghost" data-act="redetect">${icon("refresh")}Sprawdź ponownie</button></div></div>
+  const modState = r.script_installed
+    ? `<span class="${upToDate ? "ok" : "warn"}">${th(upToDate ? "mod_current" : "mod_outdated", { v: r.script_version, nv: r.bundled_version })}</span>`
+    : `<span class="bad">${t("mod_missing")}</span>`;
+  return `${head(t("nav_reaper"), t("reaper_lead"), `<button class="btn ghost" data-act="redetect">${icon("refresh")}${t("check_again")}</button>`)}
     <div class="stack">
       <section class="panel">
-        <h2>Instalacja</h2>
+        <h2>${t("installation")}</h2>
         ${r.found ? `<dl class="kv">
-          <dt>Program</dt><dd>${esc(r.exe || "nie wiem, gdzie jest plik programu")}</dd>
-          <dt>Folder ustawień</dt><dd>${esc(r.resource || "?")}</dd>
-          <dt>Mod</dt><dd>${r.script_installed ? `<span class="${upToDate ? "ok" : "warn"}">wersja ${esc(r.script_version)}${upToDate ? ", aktualna" : `, dostępna ${esc(r.bundled_version)}`}</span>` : `<span class="bad">nie zainstalowany</span>`}</dd>
-          <dt>Uruchamianie</dt><dd>${r.autostart ? "razem z REAPERem" : "ręcznie z menu Actions"}</dd>
-          <dt>REAPER teraz</dt><dd>${r.running ? "otwarty" : "zamknięty"}</dd>
-        </dl>` : `<div class="found miss"><div class="ic">${icon("x")}</div><div><b>Nie znaleziono REAPERa</b><small>Wskaż folder, w którym jest zainstalowany.</small></div></div>`}
-        ${r.running ? `<div class="notice" style="margin-top:16px">${icon("alert")}<span>Po instalacji lub aktualizacji zamknij i otwórz REAPERa ponownie.</span></div>` : ""}
+          <dt>${t("program")}</dt><dd>${esc(r.exe || t("exe_unknown"))}</dd>
+          <dt>${t("settings_folder")}</dt><dd>${esc(r.resource || "?")}</dd>
+          <dt>Mod</dt><dd>${modState}</dd>
+          <dt>${t("startup")}</dt><dd>${t(r.autostart ? "startup_auto" : "startup_manual")}</dd>
+          <dt>${t("reaper_now")}</dt><dd>${t(r.running ? "reaper_open" : "reaper_closed")}</dd>
+        </dl>` : `<div class="found miss"><div class="ic">${icon("x")}</div><div><b>${t("ob_missing_title")}</b><small>${t("pick_reaper_text")}</small></div></div>`}
+        ${r.running ? `<div class="notice" style="margin-top:16px">${icon("alert")}<span>${t("restart_reaper")}</span></div>` : ""}
         <div class="row" style="margin-top:18px">
-          ${r.found ? `<button class="btn primary" data-act="install">${icon("download")}${r.script_installed ? (upToDate ? "Zainstaluj ponownie" : "Zaktualizuj mod") : "Zainstaluj mod"}</button>` : ""}
-          <button class="btn ghost" data-act="pick">${icon("folder")}Wskaż folder REAPERa</button>
-          ${r.resource ? `<button class="btn ghost" data-act="open-res">Otwórz folder ustawień</button>` : ""}
-          ${r.exe ? `<button class="btn ghost" data-act="launch">${icon("reaper")}Otwórz REAPERa</button>` : ""}
+          ${r.found ? `<button class="btn primary" data-act="install">${icon("download")}${t(r.script_installed ? (upToDate ? "reinstall" : "update_mod") : "install_mod")}</button>` : ""}
+          <button class="btn ghost" data-act="pick">${icon("folder")}${t("pick_reaper")}</button>
+          ${r.resource ? `<button class="btn ghost" data-act="open-res">${t("open_settings_folder")}</button>` : ""}
+          ${r.exe ? `<button class="btn ghost" data-act="launch">${icon("reaper")}${t("open_reaper")}</button>` : ""}
         </div>
       </section>
-      ${r.found ? `<section class="panel"><h2>Opcje</h2>
-        <label class="switch"><input type="checkbox" id="auto-toggle" ${r.autostart ? "checked" : ""}><i></i><span>Otwieraj okno Sesji razem z REAPERem</span></label>
-        ${r.script_installed ? `<div class="row" style="margin-top:18px"><button class="btn danger" data-act="uninstall">Odinstaluj mod</button></div>` : ""}
+      ${r.found ? `<section class="panel"><h2>${t("options")}</h2>
+        <label class="switch"><input type="checkbox" id="auto-toggle" ${r.autostart ? "checked" : ""}><i></i><span>${t("autostart")}</span></label>
+        ${r.script_installed ? `<div class="row" style="margin-top:18px"><button class="btn danger" data-act="uninstall">${t("uninstall_mod")}</button></div>` : ""}
       </section>` : ""}
-      <section class="panel"><h2>Jak używać w REAPERze</h2>
-        <div class="md"><ul>
-          <li>Okno Sesji otwiera się samo albo z <code>Actions → Sesja – REAPER Multiplayer</code>.</li>
-          <li>Nagrywaj normalnie – po zatrzymaniu nagranie trafi do wszystkich.</li>
-          <li>Zaznacz klip i kliknij <code>Komentarz do „…”</code>, żeby przypiąć uwagę do tego klipu.</li>
-          <li>Zaznacz klip albo ścieżkę, a u góry okna zobaczysz, kto ją dodał.</li>
-        </ul></div>
+      <section class="panel"><h2>${t("howto_title")}</h2>
+        <div class="md"><ul><li>${t("howto_1")}</li><li>${t("howto_2")}</li><li>${t("howto_3")}</li><li>${t("howto_4")}</li></ul></div>
       </section>
     </div>`;
 };
@@ -902,27 +918,23 @@ AFTER.reaper = () => {
     try {
       const rep = await invoke("install_mod", { resource: S.reaper.resource, autostart: e.target.checked });
       S.reaper = rep.info;
-      toast({ title: e.target.checked ? "Okno Sesji otworzy się z REAPERem" : "Okno Sesji tylko z menu Actions" });
+      toast({ title: t(e.target.checked ? "autostart_on" : "autostart_off") });
       renderView(false);
     } catch (err) { fail(err); }
   });
 };
 
 /* --- zmiany --- */
-RENDER.changes = () => `<div class="head"><div><h1>Zmiany</h1><p>Co nowego w kolejnych wersjach.</p></div>
-    <div class="actions"><button class="btn ghost" data-act="check-update">${icon("refresh")}Sprawdź aktualizacje</button></div></div>
-  <div class="panel md" id="changes">${S.releases ? releasesHtml(S.releases) : md(S.changelog || "")}</div>`;
+RENDER.changes = () => `${head(t("nav_changes"), t("changes_lead"), `<button class="btn ghost" data-act="check-update">${icon("refresh")}${t("check_updates")}</button>`)}
+  <div class="panel md" id="changes">${S.releases?.length ? releasesHtml(S.releases) : md(S.changelog || "")}</div>`;
 function releasesHtml(list) {
-  if (!list.length) return md(S.changelog || "");
   return list.map((r) => `<div class="release"><div class="tag"><h2>${esc(r.name || r.tag)}</h2><span class="muted">${esc((r.date || "").slice(0, 10))}</span></div>${md(r.body || "")}</div>`).join("");
 }
 AFTER.changes = () => {
   if (S.releases) return;
   invoke("check_update").then((u) => {
-    if (u.releases?.length) {
-      S.releases = u.releases;
-      if (S.view === "changes") $("#changes").innerHTML = releasesHtml(S.releases);
-    }
+    S.releases = u.releases || [];
+    if (S.view === "changes" && S.releases.length) $("#changes").innerHTML = releasesHtml(S.releases);
   }).catch(() => {});
 };
 
@@ -952,56 +964,59 @@ function md(src) {
 RENDER.support = () => `
   <div class="panel support-hero">
     <div>
-      <h2>Sesja jest darmowa i ma otwarty kod</h2>
-      <p>Każdy może zajrzeć do kodu, zgłosić błąd albo dopisać funkcję. Jeśli Sesja oszczędza Ci godziny
-      przesyłania plików między studiami, możesz postawić twórcy kawę – to pomaga rozwijać kolejne wersje.</p>
+      <h2>${t("support_title")}</h2>
+      <p>${t("support_text")}</p>
       <div class="row" style="margin-top:20px">
-        <button class="btn ghost" data-url="${LINKS.repo}">${icon("github")}Kod na GitHubie</button>
-        <button class="btn ghost" data-url="${LINKS.issues}">Zgłoś błąd lub pomysł</button>
+        <button class="btn ghost" data-url="${LINKS.repo}">${icon("github")}${t("code_on_github")}</button>
+        <button class="btn ghost" data-url="${LINKS.issues}">${t("report_issue")}</button>
       </div>
     </div>
     <img src="img/logo.svg" alt="">
   </div>
-  <div class="donate">${LINKS.donate.map((d) => `<button data-url="${esc(d.url)}"><b>${esc(d.name)}</b><small>${esc(d.note)}</small></button>`).join("")}</div>`;
+  <div class="donate">${LINKS.donate.map((d) => `<button data-url="${esc(d.url)}"><b>${esc(d.name)}</b><small>${t(d.note)}</small></button>`).join("")}</div>`;
 
 /* --- ustawienia --- */
 RENDER.settings = () => {
   const c = S.cfg;
-  return `<div class="head"><div><h1>Ustawienia</h1></div></div>
+  return `${head(t("nav_settings"))}
   <div class="stack">
+    <section class="panel">
+      <h2>${t("language")}</h2>
+      <div style="max-width:280px">${langSelect("set-lang")}</div>
+    </section>
     <form class="panel" id="set-profile">
-      <h2>Ty i sesja</h2>
+      <h2>${t("you_and_session")}</h2>
       <div class="form-grid">
-        <label class="field"><span>Nick</span><input class="input" name="nick" maxlength="40" value="${esc(c.nick)}"></label>
-        <label class="field"><span>Pokój</span><input class="input" name="room" value="${esc(c.room)}"></label>
-        <label class="field"><span>Adres serwera</span><input class="input" name="server" value="${esc(c.server)}"></label>
-        <label class="field"><span>Hasło serwera</span><input class="input" name="password" type="password" value="${esc(c.password)}"><small>Tylko litery, cyfry i . _ -</small></label>
+        <label class="field"><span>${t("nick")}</span><input class="input" name="nick" maxlength="40" value="${esc(c.nick)}"></label>
+        <label class="field"><span>${t("room")}</span><input class="input" name="room" value="${esc(c.room)}"></label>
+        <label class="field"><span>${t("server_addr")}</span><input class="input" name="server" value="${esc(c.server)}"></label>
+        <label class="field"><span>${t("server_password")}</span><input class="input" name="password" type="password" value="${esc(c.password)}"><small>${t("password_hint")}</small></label>
       </div>
-      <div class="row" style="margin-top:18px"><button class="btn primary">Zapisz i połącz ponownie</button>
-        ${S.reaper?.script_installed ? `<span class="muted">Zapiszę też te dane w REAPERze.</span>` : ""}</div>
+      <div class="row" style="margin-top:18px"><button class="btn primary">${t("save_reconnect")}</button>
+        ${S.reaper?.script_installed ? `<span class="muted">${t("save_to_reaper_too")}</span>` : ""}</div>
     </form>
     <form class="panel" id="set-host">
-      <h2>Mój serwer</h2>
+      <h2>${t("my_server")}</h2>
       <div class="form-grid">
-        <label class="field"><span>Port</span><input class="input num" name="host_port" type="number" min="1024" max="65535" value="${c.host_port}"></label>
-        <label class="field"><span>Hasło</span><input class="input" name="host_password" type="password" value="${esc(c.host_password)}"></label>
+        <label class="field"><span>${t("port")}</span><input class="input num" name="host_port" type="number" min="1024" max="65535" value="${c.host_port}"></label>
+        <label class="field"><span>${t("password")}</span><input class="input" name="host_password" type="password" value="${esc(c.host_password)}"></label>
       </div>
-      <label class="switch" style="margin-top:16px"><input type="checkbox" name="host_on_start" ${c.host_on_start ? "checked" : ""}><i></i><span>Uruchamiaj serwer razem z aplikacją</span></label>
+      <label class="switch" style="margin-top:16px"><input type="checkbox" name="host_on_start" ${c.host_on_start ? "checked" : ""}><i></i><span>${t("host_on_start")}</span></label>
       <div class="row" style="margin-top:18px">
-        <button class="btn primary">${S.host.running ? "Zapisz i uruchom ponownie" : "Uruchom serwer"}</button>
-        ${S.host.running ? `<button type="button" class="btn danger" data-act="host-stop">Zatrzymaj</button>` : ""}
+        <button class="btn primary">${t(S.host.running ? "save_restart" : "start_server")}</button>
+        ${S.host.running ? `<button type="button" class="btn danger" data-act="host-stop">${t("stop")}</button>` : ""}
       </div>
     </form>
     <section class="panel">
-      <h2>Aktualizacje</h2>
-      <label class="switch"><input type="checkbox" id="auto-update" ${c.auto_update ? "checked" : ""}><i></i><span>Sprawdzaj aktualizacje przy uruchomieniu</span></label>
-      <div class="row" style="margin-top:18px"><button class="btn ghost" data-act="check-update">${icon("refresh")}Sprawdź teraz</button>
-        <span class="muted">Masz wersję ${esc(S.info.version)}</span></div>
+      <h2>${t("updates")}</h2>
+      <label class="switch"><input type="checkbox" id="auto-update" ${c.auto_update ? "checked" : ""}><i></i><span>${t("auto_update")}</span></label>
+      <div class="row" style="margin-top:18px"><button class="btn ghost" data-act="check-update">${icon("refresh")}${t("check_now")}</button>
+        <span class="muted">${th("you_have_version", { v: S.info.version })}</span></div>
     </section>
     <section class="panel">
-      <h2>Instalator powitalny</h2>
-      <p class="muted">Przejdź jeszcze raz przez wyszukiwanie REAPERa i instalację moda.</p>
-      <div class="row" style="margin-top:14px"><button class="btn ghost" data-act="rerun-onboarding">Uruchom ponownie</button></div>
+      <h2>${t("welcome_wizard")}</h2>
+      <p class="muted">${t("welcome_wizard_text")}</p>
+      <div class="row" style="margin-top:14px"><button class="btn ghost" data-act="rerun-onboarding">${t("run_again")}</button></div>
     </section>
   </div>`;
 };
@@ -1014,10 +1029,10 @@ AFTER.settings = () => {
       if (S.reaper?.script_installed) {
         const rep = await invoke("install_mod", { resource: S.reaper.resource, autostart: S.reaper.autostart });
         S.reaper = rep.info;
-        if (rep.warning) toast({ title: "Zapisano w REAPERze", text: rep.warning, timeout: 8000 });
+        if (rep.warning) toast({ title: t("saved_in_reaper"), text: rep.warning, timeout: 8000 });
       }
       await connect();
-      toast({ title: "Zapisano", text: `Łączę z pokojem „${S.cfg.room}”.` });
+      toast({ title: t("saved"), text: th("connecting_to", { room: S.cfg.room }) });
       renderView(false);
     } catch (err) { fail(err); }
   });
@@ -1027,7 +1042,7 @@ AFTER.settings = () => {
     try {
       S.cfg = await invoke("save_config", { cfg: { ...S.cfg, host_port: +f.get("host_port") || 8765, host_password: f.get("host_password"), host_on_start: f.get("host_on_start") === "on" } });
       S.host = await invoke("host_start", { port: S.cfg.host_port, password: S.cfg.host_password });
-      toast({ title: "Serwer działa", text: `Port ${S.host.port}. Adresy do wysłania znajdziesz w Studiu.` });
+      toast({ title: t("server_started"), text: th("server_started_text", { port: S.host.port }) });
       renderConn();
       renderView(false);
     } catch (err) { fail(err); }
@@ -1038,6 +1053,7 @@ AFTER.settings = () => {
 };
 
 /* ------------------------------------------------------------------ akcje */
+let lastChatCount = 0;
 function markSeen(sum) {
   if (!sum) return;
   lastChatCount = sum.feed.filter((e) => e.kind === "chat").length;
@@ -1054,8 +1070,14 @@ async function connect() {
 
 const ACTIONS = {
   async disconnect() { await invoke("session_disconnect"); S.session = null; renderConn(); renderView(false); },
-  async launch() { try { await invoke("launch_reaper"); toast({ title: "Otwieram REAPERa" }); } catch (e) { fail(e); } },
-  async "host-stop"() { await invoke("host_stop"); S.host = { running: false }; S.cfg = await invoke("save_config", { cfg: { ...S.cfg, host_on_start: false } }); renderConn(); renderView(false); },
+  async launch() { try { await invoke("launch_reaper"); toast({ title: t("opening_reaper") }); } catch (e) { fail(e); } },
+  async "host-stop"() {
+    await invoke("host_stop");
+    S.host = { running: false };
+    S.cfg = await invoke("save_config", { cfg: { ...S.cfg, host_on_start: false } });
+    renderConn();
+    renderView(false);
+  },
   async "host-and-join"() {
     try {
       if (!S.host.running) S.host = await invoke("host_start", { port: S.cfg.host_port || 8765, password: S.cfg.host_password });
@@ -1066,7 +1088,7 @@ const ACTIONS = {
   },
   async join() {
     const server = $("#join-server").value.trim(), room = $("#join-room").value.trim();
-    if (!server || !room) return toast({ title: "Podaj adres serwera i pokój" });
+    if (!server || !room) return toast({ title: t("need_server_room") });
     try {
       S.cfg = await invoke("save_config", { cfg: { ...S.cfg, server, room, password: $("#join-pass").value.trim() } });
       await connect();
@@ -1081,19 +1103,24 @@ const ACTIONS = {
     try {
       const rep = await invoke("install_mod", { resource: S.reaper.resource, autostart: S.reaper.autostart || S.cfg.autostart_script });
       S.reaper = rep.info;
-      toast({ title: "Mod zainstalowany", text: rep.warning || `Wersja ${rep.info.script_version}.`, timeout: 7000 });
+      toast({ title: t("mod_installed"), text: rep.warning || th("version_n", { v: rep.info.script_version }), timeout: 7000 });
       renderView(false);
     } catch (e) { fail(e); }
   },
-  async uninstall() {
+  uninstall() {
     toast({
-      title: "Odinstalować mod?",
-      text: "Usunę skrypt, akcję i autostart. Twoje projekty zostaną nietknięte.",
+      title: t("uninstall_q"),
+      text: t("uninstall_text"),
       actions: [
-        { label: "Anuluj", fn: (close) => close() },
-        { label: "Odinstaluj", primary: true, fn: async (close) => {
+        { label: t("cancel"), fn: (close) => close() },
+        { label: t("uninstall"), primary: true, fn: async (close) => {
           close();
-          try { await invoke("uninstall_mod", { resource: S.reaper.resource }); S.reaper = await invoke("detect_reaper"); renderView(false); toast({ title: "Mod odinstalowany" }); } catch (e) { fail(e); }
+          try {
+            await invoke("uninstall_mod", { resource: S.reaper.resource });
+            S.reaper = await invoke("detect_reaper");
+            renderView(false);
+            toast({ title: t("mod_uninstalled") });
+          } catch (e) { fail(e); }
         } },
       ],
     });
@@ -1104,23 +1131,23 @@ const ACTIONS = {
 };
 
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-view],[data-act],[data-ob],[data-url],[data-copy],[data-play],[data-filter],[data-del-comment],canvas.wave");
-  if (!t) return;
-  if (t.dataset.view) return go(t.dataset.view);
-  if (t.dataset.act) return ACTIONS[t.dataset.act]?.(t);
-  if (t.dataset.ob) return obAction(t.dataset.ob, t);
-  if (t.dataset.url) { e.preventDefault(); return invoke("open_url", { url: t.dataset.url }).catch(fail); }
-  if (t.dataset.copy) {
-    navigator.clipboard?.writeText(t.dataset.copy).then(() => toast({ title: "Skopiowano adres", text: t.dataset.copy }), fail);
+  const el = e.target.closest("[data-view],[data-act],[data-ob],[data-url],[data-copy],[data-play],[data-filter],[data-del-comment],canvas.wave");
+  if (!el) return;
+  if (el.dataset.view) return go(el.dataset.view);
+  if (el.dataset.act) return ACTIONS[el.dataset.act]?.(el);
+  if (el.dataset.ob) return obAction(el.dataset.ob, el);
+  if (el.dataset.url) { e.preventDefault(); return invoke("open_url", { url: el.dataset.url }).catch(fail); }
+  if (el.dataset.copy) {
+    navigator.clipboard?.writeText(el.dataset.copy).then(() => toast({ title: t("copied"), text: el.dataset.copy }), fail);
     return;
   }
-  if (t.dataset.play) return togglePlay(t.dataset.play, t);
-  if (t.dataset.filter !== undefined) { S.musicFilter = t.dataset.filter || null; $("#clips").dataset.ids = ""; return REFRESH.music(); }
-  if (t.dataset.delComment) return invoke("delete_comment", { id: t.dataset.delComment }).catch(fail);
-  if (t.matches("canvas.wave") && S.audio.id === t.dataset.wave && S.audio.el.duration) {
-    const r = t.getBoundingClientRect();
+  if (el.dataset.play) return togglePlay(el.dataset.play, el);
+  if (el.dataset.filter !== undefined) { S.musicFilter = el.dataset.filter || null; $("#clips").dataset.ids = ""; return REFRESH.music(); }
+  if (el.dataset.delComment) return invoke("delete_comment", { id: el.dataset.delComment }).catch(fail);
+  if (el.matches("canvas.wave") && S.audio.id === el.dataset.wave && S.audio.el.duration) {
+    const r = el.getBoundingClientRect();
     S.audio.el.currentTime = ((e.clientX - r.left) / r.width) * S.audio.el.duration;
-    drawWave(t);
+    drawWave(el);
   }
 });
 
@@ -1131,28 +1158,27 @@ async function checkUpdates(manual) {
   let u;
   try { u = await invoke("check_update"); } catch (e) { if (manual) fail(e); return; }
   if (u.releases?.length) S.releases = u.releases;
-  if (!u.newer) { if (manual) toast({ title: "Masz najnowszą wersję", text: `Sesja ${u.current}` }); return; }
+  if (!u.newer) { if (manual) toast({ title: t("up_to_date"), text: `Sesja ${u.current}` }); return; }
   if (!u.asset_url) {
-    toast({ title: `Dostępna wersja ${u.latest}`, text: "Pobierz ją ze strony projektu.", actions: [{ label: "Otwórz", primary: true, fn: (c) => { c(); invoke("open_url", { url: `${LINKS.repo}/releases/latest` }); } }] });
+    toast({ title: t("new_version", { v: u.latest }), text: t("get_from_site"), actions: [{ label: t("open"), primary: true, fn: (c) => { c(); invoke("open_url", { url: `${LINKS.repo}/releases/latest` }); } }] });
     return;
   }
   toast({
-    title: `Nowa wersja ${u.latest}`,
-    text: (u.notes || "").split("\n").find((l) => l.trim() && !l.startsWith("#"))?.replace(/^[-*]\s*/, "") || "Poprawki i nowe funkcje.",
+    title: t("new_version", { v: u.latest }),
+    text: (u.notes || "").split("\n").find((l) => l.trim() && !l.startsWith("#"))?.replace(/^[-*]\s*/, "") || t("update_default_note"),
     actions: [
-      { label: "Później", fn: (c) => c() },
-      { label: "Zainstaluj", primary: true, fn: async (close) => {
+      { label: t("later"), fn: (c) => c() },
+      { label: t("install"), primary: true, fn: async (close) => {
         close();
-        const t = toast({ title: `Pobieram wersję ${u.latest}`, progress: true });
+        const tt = toast({ title: t("downloading_version", { v: u.latest }), progress: true });
         try { await invoke("install_update", { url: u.asset_url, name: u.asset_name }); }
-        catch (e) { t.close(); fail(e); }
+        catch (e) { tt.close(); fail(e); }
       } },
     ],
   });
 }
 
 /* ------------------------------------------------------------------ zdarzenia sesji */
-let lastChatCount = 0;
 function onSession(sum) {
   // pierwsza porcja danych po połączeniu to historia – nie liczymy jej jako nowości
   const prev = S.firstSync ? null : S.session;
@@ -1164,10 +1190,9 @@ function onSession(sum) {
     S.unread += fresh.length;
     if (fresh.length) renderNav();
   }
-  // komentarze od innych – krótkie powiadomienie
   if (prev) {
     const known = new Set(prev.comments.map((c) => c.id));
-    for (const c of sum.comments) if (!known.has(c.id) && !c.mine) toast({ title: `${c.user} dodaje komentarz`, text: c.text });
+    for (const c of sum.comments) if (!known.has(c.id) && !c.mine) toast({ title: t("new_comment_from", { name: c.user }), text: c.text });
   }
   lastChatCount = chats.length;
   renderConn();
@@ -1188,20 +1213,23 @@ async function boot() {
     invoke("get_config"), invoke("app_info"), invoke("changelog"), invoke("host_status"), invoke("detect_reaper"),
   ]);
   Object.assign(S, { cfg, info, changelog, host, reaper: reaperInfo });
+  setLang(cfg.lang || detectLang());
+  if (!cfg.lang) S.cfg = await invoke("save_config", { cfg: { ...cfg, lang: lang() } });
+  applyStaticTexts();
   await listen("session", onSession);
   await listen("update-progress", ([done, total]) => {
     const el = document.querySelector(".toast .progress i");
     if (el && total) el.style.width = `${Math.round((done / total) * 100)}%`;
   });
-  if (!cfg.onboarded) {
+  if (!S.cfg.onboarded) {
     obShow();
   } else {
     startApp();
-    if (cfg.nick && cfg.server && cfg.room) connect().catch(() => {});
+    if (S.cfg.nick && S.cfg.server && S.cfg.room) connect().catch(() => {});
   }
-  if (cfg.auto_update) setTimeout(() => checkUpdates(false), 2500);
+  if (S.cfg.auto_update) setTimeout(() => checkUpdates(false), 2500);
 }
 
 boot().catch((e) => {
-  document.body.innerHTML = `<div style="padding:40px;font:16px system-ui;color:#eae3d2">Nie udało się uruchomić aplikacji: ${esc(e)}</div>`;
+  document.body.innerHTML = `<div style="padding:40px;font:16px system-ui;color:#eae3d2">${esc(String(e))}</div>`;
 });

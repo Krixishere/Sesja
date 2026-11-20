@@ -1,34 +1,89 @@
-# Buduje instalatory aplikacji Sesja i publikuje je jako wydanie na GitHubie.
-# Uruchom: zmień wersję w app/src-tauri/Cargo.toml i tauri.conf.json, dopisz zmiany
-# do CHANGELOG.md, potem: git tag v1.0.1 && git push origin v1.0.1
-# Aplikacja sama znajdzie nowe wydanie i zaproponuje aktualizację.
+# Automatyczne wydania aplikacji Sesja.
+#
+# - Każdy push (na dowolny branch): budowanie próbne na Windows, macOS i Linuksie.
+#   Gotowe instalatory są do pobrania w zakładce „Artifacts” danego uruchomienia.
+# - Push na main z NOWĄ wersją (app/src-tauri/tauri.conf.json, pole "version"),
+#   dla której nie ma jeszcze tagu: wydanie vX.Y.Z na GitHubie z instalatorami.
+#   Zainstalowane aplikacje same zaproponują tę aktualizację.
+# - Ręcznie: zakładka Actions → „Wydanie” → Run workflow.
+#
+# Jak wydać nową wersję: podnieś "version" w tauri.conf.json i Cargo.toml,
+# dopisz zmiany do CHANGELOG.md, scal do main. Reszta dzieje się sama.
 name: Wydanie
 
 on:
   push:
-    tags: ["v*"]
+    branches: ["**"]
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  # na main nie przerywamy – mogłoby to uciąć publikowanie wydania
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      release: ${{ steps.v.outputs.release }}
+      notes: ${{ steps.v.outputs.notes }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        name: Wersja i decyzja o wydaniu
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./app/src-tauri/tauri.conf.json').version")
+          CARGO=$(grep -m1 '^version' app/src-tauri/Cargo.toml | cut -d'"' -f2)
+          if [ "$VERSION" != "$CARGO" ]; then
+            echo "::error::Wersja w tauri.conf.json ($VERSION) różni się od Cargo.toml ($CARGO)"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          RELEASE=false
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || { [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; }; then
+            if gh release view "v$VERSION" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              echo "Wydanie v$VERSION już istnieje – tylko budowanie próbne."
+            else
+              RELEASE=true
+            fi
+          fi
+          echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
+          # opis wydania = sekcja tej wersji z CHANGELOG.md
+          NOTES=$(awk -v v="$VERSION" '
+            /^## / { if (found) exit; if (index($0, "## Sesja " v) == 1) { found=1; next } }
+            found { print }' CHANGELOG.md)
+          {
+            echo "notes<<EOF_NOTES"
+            echo "${NOTES:-Poprawki i nowe funkcje.}"
+            echo "EOF_NOTES"
+          } >> "$GITHUB_OUTPUT"
+
   build:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: windows-latest
+            name: windows
             args: ""
           - platform: macos-latest
+            name: macos
             args: "--target universal-apple-darwin"
           - platform: ubuntu-22.04
+            name: linux
             args: ""
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
       - name: Zależności systemowe (Linux)
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.name == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
@@ -37,19 +92,34 @@ jobs:
           node-version: 22
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.name == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: app/src-tauri -> target
-      - uses: tauri-apps/tauri-action@v0
+          key: ${{ matrix.name }}
+
+      - name: Budowanie i wydanie
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: app
           tauriScript: npx --yes @tauri-apps/cli@2
-          tagName: ${{ github.ref_name }}
-          releaseName: "Sesja ${{ github.ref_name }}"
-          releaseBody: "Zmiany opisane są w CHANGELOG.md. Aplikacja zainstalowana wcześniej zaproponuje tę aktualizację sama."
+          args: ${{ matrix.args }}
+          # bez tagName tauri-action tylko buduje – wydanie powstaje wyłącznie na main z nową wersją
+          tagName: ${{ needs.version.outputs.release == 'true' && format('v{0}', needs.version.outputs.version) || '' }}
+          releaseName: ${{ needs.version.outputs.release == 'true' && format('Sesja {0}', needs.version.outputs.version) || '' }}
+          releaseBody: ${{ needs.version.outputs.notes }}
           releaseDraft: false
           prerelease: false
-          args: ${{ matrix.args }}
+
+      - name: Instalatory jako artefakt (do pobrania z tego uruchomienia)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sesja-${{ needs.version.outputs.version }}-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            app/src-tauri/target/**/release/bundle/nsis/*.exe
+            app/src-tauri/target/**/release/bundle/dmg/*.dmg
+            app/src-tauri/target/**/release/bundle/appimage/*.AppImage
+            app/src-tauri/target/**/release/bundle/deb/*.deb

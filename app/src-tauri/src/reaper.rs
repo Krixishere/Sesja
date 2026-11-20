@@ -3,6 +3,7 @@
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use crate::i18n::{t, tf};
 
 /// Skrypt moda jest wbudowany w aplikację – instalator zawsze wgrywa wersję zgodną z aplikacją.
 pub const SCRIPT: &str = include_str!("../../../reaper/ReaperMultiplayer.lua");
@@ -196,15 +197,10 @@ pub fn from_user_path(p: &Path) -> Result<ReaperInfo, String> {
         info.resource = Some(p.to_string_lossy().into_owned());
         info.found = true;
     } else {
-        return Err(
-            "W tym folderze nie ma programu REAPER ani pliku reaper.ini. Wskaż folder, w którym zainstalowany jest REAPER."
-                .into(),
-        );
+        return Err(t("no_reaper_here"));
     }
     if info.resource.is_none() {
-        return Err(
-            "Znaleziono REAPERa, ale nie jego folder ustawień. Uruchom REAPERa raz i spróbuj ponownie.".into(),
-        );
+        return Err(t("no_resource"));
     }
     fill_status(&mut info);
     Ok(info)
@@ -247,19 +243,20 @@ pub struct Conn<'a> {
     pub room: &'a str,
     pub user: &'a str,
     pub password: &'a str,
+    pub lang: &'a str,
 }
 
 pub fn install(resource: &str, autostart: bool, conn: Option<Conn>) -> Result<InstallReport, String> {
     let res = PathBuf::from(resource);
     if !res.is_dir() {
-        return Err(format!("Folder REAPERa nie istnieje: {resource}"));
+        return Err(tf("no_folder", &[&resource]));
     }
     let scripts = res.join("Scripts");
     let dir = scripts.join(SCRIPT_DIR);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Nie mogę utworzyć {}: {e}", dir.display()))?;
+    std::fs::create_dir_all(&dir).map_err(|e| tf("write_failed", &[&dir.display(), &e]))?;
     let script_path = dir.join(SCRIPT_FILE);
     std::fs::write(&script_path, SCRIPT)
-        .map_err(|e| format!("Nie mogę zapisać skryptu: {e}"))?;
+        .map_err(|e| tf("write_failed", &[&script_path.display(), &e]))?;
 
     register_action(&res)?;
     set_autostart(&res, autostart)?;
@@ -272,10 +269,7 @@ pub fn install(resource: &str, autostart: bool, conn: Option<Conn>) -> Result<In
         settings_written = true;
     }
     if running {
-        warning = Some(
-            "REAPER jest teraz uruchomiony. Zamknij go i otwórz ponownie, żeby zobaczył nową akcję i ustawienia."
-                .into(),
-        );
+        warning = Some(t("reaper_running"));
     }
     let mut info = detect(None, Some(resource));
     info.resource = Some(resource.to_string());
@@ -315,7 +309,7 @@ fn register_action(res: &Path) -> Result<(), String> {
         "SCR 4 0 {ACTION_ID} \"{ACTION_NAME}\" \"{SCRIPT_DIR}/{SCRIPT_FILE}\""
     ));
     std::fs::write(&kb, lines.join("\n") + "\n")
-        .map_err(|e| format!("Nie mogę zapisać reaper-kb.ini: {e}"))
+        .map_err(|e| tf("write_failed", &[&"reaper-kb.ini", &e]))
 }
 
 /// Dopisuje / usuwa uruchamianie skryptu przy starcie REAPERa (__startup.lua).
@@ -347,7 +341,7 @@ fn set_autostart(res: &Path, on: bool) -> Result<(), String> {
         return Ok(());
     }
     std::fs::create_dir_all(res.join("Scripts")).map_err(|e| e.to_string())?;
-    std::fs::write(&path, out).map_err(|e| format!("Nie mogę zapisać __startup.lua: {e}"))
+    std::fs::write(&path, out).map_err(|e| tf("write_failed", &[&"__startup.lua", &e]))
 }
 
 /// Zapisuje nick/serwer/pokój w ustawieniach REAPERa, żeby skrypt łączył się sam.
@@ -360,6 +354,7 @@ pub fn write_settings(res: &Path, c: &Conn) -> Result<(), String> {
         ("room", c.room),
         ("user", c.user),
         ("password", c.password),
+        ("lang", c.lang),
     ];
     let mut out: Vec<String> = Vec::new();
     let mut in_ours = false;
@@ -408,7 +403,7 @@ pub fn write_settings(res: &Path, c: &Conn) -> Result<(), String> {
         }
     }
     std::fs::write(&path, out.join("\n") + "\n")
-        .map_err(|e| format!("Nie mogę zapisać ustawień REAPERa: {e}"))
+        .map_err(|e| tf("write_failed", &[&"reaper-extstate.ini", &e]))
 }
 
 #[cfg(test)]
@@ -427,7 +422,7 @@ mod tests {
             "[Other]\na=1\n[ReaperMultiplayer]\nuser=stary\ncolorize=0\n",
         )
         .unwrap();
-        let conn = Conn { server: "http://1.2.3.4:8765", room: "pokoj", user: "Ania", password: "x" };
+        let conn = Conn { server: "http://1.2.3.4:8765", room: "pokoj", user: "Ania", password: "x", lang: "en" };
         let rep = install(dir.to_str().unwrap(), true, Some(conn)).unwrap();
         assert!(rep.info.script_installed);
         assert!(rep.info.autostart);
@@ -443,7 +438,7 @@ mod tests {
         let ext = std::fs::read_to_string(dir.join("reaper-extstate.ini")).unwrap();
         assert!(ext.contains("[Other]\na=1"));
         assert!(ext.contains("user=Ania") && !ext.contains("user=stary"));
-        assert!(ext.contains("colorize=0") && ext.contains("room=pokoj"));
+        assert!(ext.contains("colorize=0") && ext.contains("room=pokoj") && ext.contains("lang=en"));
         uninstall(dir.to_str().unwrap()).unwrap();
         let kb = std::fs::read_to_string(dir.join("reaper-kb.ini")).unwrap();
         assert!(!kb.contains(ACTION_ID) && kb.contains("40044"));

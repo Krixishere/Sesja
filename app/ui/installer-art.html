@@ -1,0 +1,25 @@
+<!doctype html><meta charset="utf-8">
+<!-- Źródło grafik instalatora Windows (NSIS). Renderowane do BMP skryptem z README. -->
+<style>
+@font-face { font-family: B; src: url("fonts/bricolage-grotesque-latin-ext-wght-normal.woff2"); font-weight: 200 800; }
+@font-face { font-family: B; src: url("fonts/bricolage-grotesque-latin-wght-normal.woff2"); font-weight: 200 800; unicode-range: U+0000-00FF; }
+@font-face { font-family: I; src: url("fonts/instrument-sans-latin-500-normal.woff2"); font-weight: 500; }
+body { margin: 0; }
+#side { width: 164px; height: 314px; position: relative; overflow: hidden;
+  background: radial-gradient(130% 70% at 50% 100%, #2a2a3a 0%, #121a30 45%, #0b1020 100%); color: #eae3d2; }
+#side img { position: absolute; left: 26px; top: 46px; width: 112px; height: 112px; filter: drop-shadow(0 10px 18px rgba(0,0,0,.5)); }
+#side b { position: absolute; left: 0; right: 0; top: 176px; text-align: center; font: 700 34px/1 B, sans-serif; letter-spacing: -0.03em; }
+#side span { position: absolute; left: 0; right: 0; top: 218px; text-align: center; font: 500 11.5px/1.35 I, sans-serif; color: #8e95ab; }
+#side svg { position: absolute; left: 0; bottom: 18px; }
+#head { width: 150px; height: 57px; background: #fff; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding-right: 8px; box-sizing: border-box; }
+#head img { width: 38px; height: 38px; }
+#head b { font: 700 22px/1 B, sans-serif; color: #0e1424; letter-spacing: -0.03em; }
+</style>
+<div id="side"><img src="img/logo.svg"><b>Sesja</b><span>REAPER Multiplayer</span>
+  <svg width="164" height="40" viewBox="0 0 164 40" fill="none" stroke-width="3" stroke-linecap="round">
+    <path d="M-4 22 C 14 8, 26 36, 44 22 S 70 12, 82 20" stroke="#5fc9b5"/>
+    <path d="M168 22 C 150 36, 138 8, 120 22 S 94 30, 82 20" stroke="#eae3d2"/>
+    <circle cx="82" cy="20" r="5" fill="#f3a73b" stroke="none"/>
+  </svg>
+</div>
+<div id="head"><img src="img/logo.svg"><b>Sesja</b></div>

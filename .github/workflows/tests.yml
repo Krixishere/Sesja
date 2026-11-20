@@ -19,6 +19,8 @@ jobs:
           workspaces: app/src-tauri -> target
       - name: Testy moda (Lua)
         run: lua5.4 tests/test_chunks.lua
+      - name: Kompletność tłumaczeń
+        run: node tests/check_i18n.js
       - name: Testy aplikacji (Rust)
         run: cargo test --manifest-path app/src-tauri/Cargo.toml
       - name: E2E z serwerem w Pythonie

@@ -21,6 +21,8 @@ pub struct Config {
     pub host_port: u16,
     pub host_password: String,
     pub host_on_start: bool,
+    /// Język interfejsu: pl, en, de, es, fr; pusty = wykryj z systemu.
+    pub lang: String,
 }
 
 impl Default for Config {
@@ -38,6 +40,7 @@ impl Default for Config {
             host_port: 8765,
             host_password: String::new(),
             host_on_start: false,
+            lang: String::new(),
         }
     }
 }
@@ -65,7 +68,7 @@ pub fn save(cfg: &Config) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let s = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
-    std::fs::write(&p, s).map_err(|e| format!("Nie udało się zapisać ustawień: {e}"))
+    std::fs::write(&p, s).map_err(|e| crate::i18n::tf("save_settings", &[&e]))
 }
 
 /// Tylko znaki bezpieczne w nazwie pokoju / haśle (tak samo jak w skrypcie Lua).

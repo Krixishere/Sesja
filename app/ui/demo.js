@@ -9,7 +9,7 @@
   const cfg = {
     onboarded: params.get("demo") !== "onboard", nick: "Ania", server: "http://100.101.102.103:8765", room: "nowy_singiel",
     password: "", reaper_exe: null, reaper_resource: null, auto_update: false, autostart_script: true,
-    host_port: 8765, host_password: "", host_on_start: false,
+    host_port: 8765, host_password: "", host_on_start: false, lang: params.get("lang") || "",
   };
   const reaper = {
     found: params.get("reaper") !== "missing", exe: "C:\\Program Files\\REAPER (x64)\\reaper.exe",
@@ -19,7 +19,8 @@
   };
   const tr = (guid, name, author, editor) => ({ guid, name, author, editor, created: now - 4000, ts: now - 300 });
   const it = (guid, name, track, pos, len, author, file, ago) => ({ guid, name, track, pos, len, file, midi: false, author, editor: author, created: now - ago, ts: now - ago });
-  const ev = (kind, user, text, ago, extra = {}) => ({ kind, user, text, ts: now - ago, pos: null, id: null, item: null, item_name: null, mine: user === "Ania", ...extra });
+  const ev = (kind, user, text, ago, extra = {}) => ({ kind, user, text, ts: now - ago, pos: null, id: null, item: null, item_name: null, action: null, name: null, track: null, bpm: null, mine: user === "Ania", ...extra });
+  const act = (user, action, ago, name, track, pos) => ev("act", user, "", ago, { action, name, track, pos });
   const session = {
     status: "on", error: null, room: "nowy_singiel", server: "http://100.101.102.103:8765", me: "Ania", my_color: "#f58231",
     users: [
@@ -41,15 +42,15 @@
     ],
     feed: [
       ev("chat", "Kuba", "Bas wrzucony, zobaczcie czy nie za głośno", 3500),
-      ev("act", "Kuba", "dodaje klip „bas_DI” na ścieżce „Bas” @ 0:00", 3600),
-      ev("act", "Bartek", "dodaje klip „gitara_intro” na ścieżce „Gitara akustyczna” @ 0:00", 1800),
+      act("Kuba", "item_add", 3600, "bas_DI", "Bas", 0),
+      act("Bartek", "item_add", 1800, "gitara_intro", "Gitara akustyczna", 0),
       ev("chat", "Ania", "Super! Dogrywam wokal do zwrotki", 600),
-      ev("act", "Ania", "dodaje klip „wokal_zwrotka_take4” na ścieżce „Wokal główny” @ 0:12", 420),
+      act("Ania", "item_add", 420, "wokal_zwrotka_take4", "Wokal główny", 12.5),
       ev("comment", "Bartek", "Tu wejdź pół taktu później, będzie lepiej siedzieć z gitarą", 380, { pos: 24.0, id: "c1", item: "i1", item_name: "wokal_zwrotka_take4" }),
-      ev("act", "Ania", "dodaje klip „wokal_refren_take2” na ścieżce „Wokal główny” @ 0:48", 260),
-      ev("act", "Kuba", "zmienia ścieżkę „Chórki”", 150),
+      act("Ania", "item_add", 260, "wokal_refren_take2", "Wokal główny", 48),
+      act("Kuba", "track_edit", 150, "Chórki"),
       ev("chat", "Bartek", "Nagrywam drugą zwrotkę, dajcie mi 5 minut", 100),
-      ev("act", "Bartek", "edytuje klip „gitara_zwrotka” (Gitara akustyczna)", 90),
+      act("Bartek", "item_edit", 90, "gitara_zwrotka", "Gitara akustyczna"),
     ],
     comments: [],
     seq: 120,
@@ -57,7 +58,7 @@
   };
   session.comments = session.feed.filter((e) => e.kind === "comment");
   const host = { running: params.get("host") === "1", port: 8765, addresses: [
-    { url: "http://100.101.102.103:8765", kind: "Tailscale" }, { url: "http://192.168.1.24:8765", kind: "sieć lokalna" }, { url: "http://127.0.0.1:8765", kind: "ten komputer" }] };
+    { url: "http://100.101.102.103:8765", kind: "tailscale" }, { url: "http://192.168.1.24:8765", kind: "lan" }, { url: "http://127.0.0.1:8765", kind: "local" }] };
   let connected = false;
   const changelog = "# Dziennik zmian\n\n## 1.0.0 — aplikacja Sesja\n\n- Instalator, który sam znajduje REAPERa.\n- Hostowanie sesji w aplikacji.\n\n## Mod 1.1.0\n\n- Komentarze do klipów.";
   const api = {

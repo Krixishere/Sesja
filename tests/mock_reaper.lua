@@ -326,6 +326,7 @@ P.ext[S .. "server"] = SERVER
 P.ext[S .. "room"] = os.getenv("RMP_ROOM") or "test"
 P.ext[S .. "user"] = ROLE == "A" and "Ania" or "Bartek"
 P.ext[S .. "interval"] = "0.3"
+P.ext[S .. "lang"] = ROLE == "A" and "pl" or "en" -- Ania po polsku, Bartek po angielsku
 os.execute('mkdir -p "' .. DIR .. '/project"')
 
 -- prawdziwy plik WAV (mono, 16 bit, 44.1 kHz) z sinusem o losowej wysokości

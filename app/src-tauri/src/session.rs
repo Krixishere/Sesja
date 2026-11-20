@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use crate::i18n::{self, t, tf};
 use tauri::{AppHandle, Emitter};
 
 #[derive(Clone, Debug)]
@@ -45,7 +46,15 @@ pub struct Item {
 
 #[derive(Serialize, Clone)]
 pub struct Entry {
-    pub kind: String, // act | chat | comment | system
+    pub kind: String, // act | chat | comment
+    /// Dla kind == "act": track_add, track_edit, track_del, item_add, item_edit, item_del,
+    /// order, tempo, comment_del – interfejs zamienia to na zdanie w swoim języku.
+    pub action: Option<String>,
+    /// Nazwa ścieżki / klipu, którego dotyczy zmiana.
+    pub name: Option<String>,
+    /// Nazwa ścieżki, na której leży klip.
+    pub track: Option<String>,
+    pub bpm: Option<f64>,
     pub user: String,
     pub text: String,
     pub ts: f64,
@@ -131,15 +140,6 @@ fn file_ref(chunk: &str) -> Option<String> {
     rest.split('"').next().map(|s| s.to_string())
 }
 
-pub fn fmt_pos(sec: f64) -> String {
-    let s = sec.max(0.0) as u64;
-    if s >= 3600 {
-        format!("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60)
-    } else {
-        format!("{}:{:02}", s / 60, s % 60)
-    }
-}
-
 impl Model {
     fn track_name(&self, chunk: &str) -> String {
         let n = unquote(&chunk_field(chunk, "NAME").unwrap_or_default());
@@ -150,19 +150,47 @@ impl Model {
         }
     }
 
-    fn push(&mut self, kind: &str, user: &str, text: String, ts: f64) {
+    fn push_act(
+        &mut self,
+        user: &str,
+        action: &str,
+        name: Option<String>,
+        track: Option<String>,
+        pos: Option<f64>,
+        bpm: Option<f64>,
+        ts: f64,
+    ) {
         // łączymy serię drobnych zmian tej samej osoby w jeden wpis
-        if kind == "act" {
-            if let Some(last) = self.feed.back_mut() {
-                if last.kind == "act" && last.user == user && last.text == text && ts - last.ts < 30.0 {
-                    last.ts = ts;
-                    return;
-                }
+        if let Some(last) = self.feed.back_mut() {
+            if last.kind == "act"
+                && last.user == user
+                && last.action.as_deref() == Some(action)
+                && last.name == name
+                && ts - last.ts < 30.0
+            {
+                last.ts = ts;
+                last.bpm = bpm;
+                return;
             }
         }
+        self.push_entry("act", user, String::new(), ts);
+        if let Some(e) = self.feed.back_mut() {
+            e.action = Some(action.into());
+            e.name = name;
+            e.track = track;
+            e.pos = pos;
+            e.bpm = bpm;
+        }
+    }
+
+    fn push_entry(&mut self, kind: &str, user: &str, text: String, ts: f64) {
         let mine = user == self.conn.user;
         self.feed.push_back(Entry {
             kind: kind.into(),
+            action: None,
+            name: None,
+            track: None,
+            bpm: None,
             user: user.into(),
             text,
             ts,
@@ -226,7 +254,7 @@ impl Model {
             for c in chat {
                 let user = c["user"].as_str().unwrap_or("?").to_string();
                 let text = c["text"].as_str().unwrap_or("").to_string();
-                self.push("chat", &user, text, c["ts"].as_f64().unwrap_or(0.0));
+                self.push_entry("chat", &user, text, c["ts"].as_f64().unwrap_or(0.0));
             }
         }
         self.last_seq = st["seq"].as_u64().unwrap_or(0);
@@ -254,28 +282,21 @@ impl Model {
                 if !self.order.contains(&guid) {
                     self.order.push(guid);
                 }
-                let text = if existed {
-                    format!("zmienia ścieżkę „{name}”")
-                } else {
-                    format!("dodaje ścieżkę „{name}”")
-                };
-                self.push("act", &user, text, ts);
+                let action = if existed { "track_edit" } else { "track_add" };
+                self.push_act(&user, action, Some(name), None, None, None, ts);
             }
             "track_del" => {
                 let name = self.tracks.remove(&guid).map(|t| t.name).unwrap_or_else(|| "?".into());
                 self.order.retain(|g| g != &guid);
                 self.items.retain(|_, it| it.track != guid);
-                self.push("act", &user, format!("usuwa ścieżkę „{name}”"), ts);
+                self.push_act(&user, "track_del", Some(name), None, None, None, ts);
             }
             "item" => {
                 let it = item_from(&guid, op["chunk"].as_str().unwrap_or(""), op["track"].as_str().unwrap_or(""));
                 let prev = self.items.get(&guid).cloned();
                 let tname = self.tracks.get(&it.track).map(|t| t.name.clone()).unwrap_or_else(|| "?".into());
-                let text = if prev.is_some() {
-                    format!("edytuje klip „{}” ({tname})", it.name)
-                } else {
-                    format!("dodaje klip „{}” na ścieżce „{tname}” @ {}", it.name, fmt_pos(it.pos))
-                };
+                let action = if prev.is_some() { "item_edit" } else { "item_add" };
+                let (iname, ipos) = (it.name.clone(), it.pos);
                 self.items.insert(
                     guid.clone(),
                     Item {
@@ -286,22 +307,17 @@ impl Model {
                         ..it
                     },
                 );
-                self.push("act", &user, text, ts);
+                self.push_act(&user, action, Some(iname), Some(tname), Some(ipos), None, ts);
             }
             "item_del" => {
                 let name = self.items.remove(&guid).map(|i| i.name).unwrap_or_else(|| "?".into());
-                self.push("act", &user, format!("usuwa klip „{name}”"), ts);
+                self.push_act(&user, "item_del", Some(name), None, None, None, ts);
             }
-            "order" => self.push("act", &user, "zmienia kolejność ścieżek".into(), ts),
-            "tempo" => self.push(
-                "act",
-                &user,
-                format!("ustawia tempo na {:.2} BPM", op["bpm"].as_f64().unwrap_or(0.0)),
-                ts,
-            ),
+            "order" => self.push_act(&user, "order", None, None, None, None, ts),
+            "tempo" => self.push_act(&user, "tempo", None, None, None, op["bpm"].as_f64(), ts),
             "chat" => {
                 let text = op["text"].as_str().unwrap_or("").to_string();
-                self.push("chat", &user, text, ts);
+                self.push_entry("chat", &user, text, ts);
             }
             "comment" => {
                 let mut c = op.clone();
@@ -315,7 +331,7 @@ impl Model {
             "comment_del" => {
                 let id = op["id"].as_str().map(String::from);
                 self.comments.retain(|x| x.id != id);
-                self.push("act", &user, "usuwa komentarz".into(), ts);
+                self.push_act(&user, "comment_del", None, None, None, None, ts);
             }
             _ => {}
         }
@@ -389,6 +405,10 @@ fn comment_entry(c: &Value, me: &str) -> Entry {
     let user = c["user"].as_str().unwrap_or("?").to_string();
     Entry {
         kind: "comment".into(),
+        action: None,
+        name: None,
+        track: None,
+        bpm: None,
         mine: user == me,
         user,
         text: c["text"].as_str().unwrap_or("").into(),
@@ -424,20 +444,20 @@ fn call(req: ureq::Request, body: Option<&Value>, conn: &Conn) -> Result<Value, 
         None => req.call(),
     };
     match res {
-        Ok(r) => r.into_json::<Value>().map_err(|e| format!("Zła odpowiedź serwera: {e}")),
+        Ok(r) => r.into_json::<Value>().map_err(|e| tf("bad_response", &[&e])),
         Err(ureq::Error::Status(_, r)) => {
             let v: Value = r.into_json().unwrap_or(json!({}));
-            Err(v["error"].as_str().unwrap_or("Błąd serwera").to_string())
+            Err(i18n::server_error(&v))
         }
-        Err(e) => Err(format!("Nie można połączyć z {}: {}", conn.server, short_err(&e.to_string()))),
+        Err(e) => Err(tf("cant_connect", &[&conn.server, &short_err(&e.to_string())])),
     }
 }
 
 fn short_err(s: &str) -> String {
     if s.contains("Connection refused") || s.contains("refused") {
-        "serwer nie odpowiada (czy jest uruchomiony?)".into()
+        t("refused")
     } else if s.contains("timed out") || s.contains("Timeout") {
-        "przekroczono czas oczekiwania".into()
+        t("timeout")
     } else {
         s.chars().take(120).collect()
     }
@@ -512,7 +532,7 @@ fn run(app: AppHandle, model: Arc<Mutex<Model>>, stop: Arc<AtomicBool>, conn: Co
                 }
                 Ok(st) => {
                     m.status = "error".into();
-                    m.error = Some(st["error"].as_str().unwrap_or("Błąd serwera").into());
+                    m.error = Some(i18n::server_error(&st));
                 }
                 Err(e) => {
                     m.status = "error".into();
@@ -565,7 +585,7 @@ fn run(app: AppHandle, model: Arc<Mutex<Model>>, stop: Arc<AtomicBool>, conn: Co
                 }
                 Ok(r) => {
                     m.status = "error".into();
-                    m.error = Some(r["error"].as_str().unwrap_or("Błąd serwera").into());
+                    m.error = Some(i18n::server_error(&r));
                     m.outbox.splice(0..0, sent);
                 }
                 Err(e) => {
@@ -599,7 +619,7 @@ fn sleep_unless(stop: &AtomicBool, ms: u64) {
 /// Pobiera plik audio z serwera do pamięci podręcznej (do odsłuchu w aplikacji).
 pub fn fetch_file(conn: &Conn, id: &str, cache: PathBuf) -> Result<PathBuf, String> {
     if !id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '~' | '-')) {
-        return Err("Zła nazwa pliku".into());
+        return Err(t("bad_name"));
     }
     let dir = cache.join("audio").join(&conn.room);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -610,7 +630,7 @@ pub fn fetch_file(conn: &Conn, id: &str, cache: PathBuf) -> Result<PathBuf, Stri
     let req = agent().get(&url(conn, &format!("/api/file?room={}&id={}", conn.room, id)));
     let req = if conn.password.is_empty() { req } else { req.set("X-RMP-Key", &conn.password) };
     let resp = req.call().map_err(|e| match e {
-        ureq::Error::Status(404, _) => "Ten plik nie dotarł jeszcze na serwer.".to_string(),
+        ureq::Error::Status(404, _) => t("file_pending"),
         e => short_err(&e.to_string()),
     })?;
     let tmp = dest.with_extension("part");
@@ -633,6 +653,5 @@ mod tests {
         assert_eq!(it.len, 4.0);
         assert_eq!(it.file.as_deref(), Some("wokal~10~abcd1234.wav"));
         assert!(!it.midi);
-        assert_eq!(fmt_pos(3725.0), "1:02:05");
     }
 }

@@ -1,5 +1,5 @@
 -- @description REAPER Multiplayer – wspólna praca nad jednym projektem przez serwer
--- @version 1.1.0
+-- @version 1.2.0
 -- @author RMP
 -- @about
 --   Łączy REAPERa z serwerem RMP (server/rmp_server.py). Wszystkie zmiany ścieżek,
@@ -10,7 +10,7 @@
 --
 --   Wymagania: REAPER 6.0+, program curl (wbudowany w Windows 10/11 i macOS).
 
-local VERSION = "1.1.0"
+local VERSION = "1.2.0"
 local M = {}
 
 -------------------------------------------------------------------------------
@@ -435,7 +435,90 @@ local CFG = {
   curl = get_ext("curl", IS_WIN and "curl.exe" or "curl"),
   interval = tonumber(get_ext("interval", "1.0")) or 1.0,
   colorize = get_ext("colorize", "1") == "1",
+  lang = get_ext("lang", "pl"), -- ustawia aplikacja Sesja; pl albo en (inne -> en)
 }
+
+-------------------------------------------------------------------------------
+-- Tłumaczenia (pl, en). T("klucz", ...) działa jak string.format.
+-------------------------------------------------------------------------------
+local L = {
+  pl = {
+    track_add = "dodaje ścieżkę „%s”", track_edit = "zmienia ścieżkę „%s”", track_del = "usuwa ścieżkę „%s”",
+    item_add = "dodaje klip „%s” na ścieżce „%s” @ %s", item_edit = "edytuje klip „%s” (%s)", item_del = "usuwa klip „%s”",
+    order = "zmienia kolejność ścieżek", tempo = "ustawia tempo na %.2f BPM", comment_del = "usuwa komentarz",
+    no_name = "bez nazwy", clip = "klip",
+    upload_failed = "Nie udało się wysłać pliku %s", conn_error = "Błąd połączenia", server_error = "Błąd serwera",
+    no_curl = "Nie można uruchomić curl (%s)", no_answer = "Brak odpowiedzi serwera (%s)",
+    state_error = "Błąd pobierania stanu", cant_connect = "Nie można połączyć",
+    srv_bad_password = "Złe hasło serwera", srv_bad_room = "Niepoprawna nazwa pokoju",
+    undo_remote = "Multiplayer: zmiany od %s", undo_audio = "Multiplayer: pobrane audio",
+    undo_clear = "Multiplayer: wyczyszczenie projektu przed wczytaniem", undo_load = "Multiplayer: wczytanie projektu z serwera",
+    full_sync = "pełna synchronizacja z serwerem", disconnected_msg = "rozłączono",
+    loaded = "wczytano projekt z serwera: %d ścieżek, %d klipów", host_msg = "jesteś gospodarzem – wysyłam Twój projekt na serwer",
+    join_q = "Pokój „%s” ma już projekt na serwerze.\n\nTAK – wczytaj projekt z serwera (Twoje obecne ścieżki zostaną usunięte, można cofnąć Ctrl+Z)\nNIE – połącz: wczytaj projekt z serwera i dodaj do niego Twoje nowe ścieżki\nANULUJ – nie łącz",
+    settings_title = "REAPER Multiplayer – połączenie",
+    settings_fields = "Adres serwera (http://IP:port),Pokój (litery/cyfry),Twój nick,Hasło serwera (opcjonalne),Program curl,extrawidth=240",
+    settings_missing = "Podaj adres serwera, nazwę pokoju i swój nick.",
+    tab_all = "Wszystko", tab_chat = "Czat", tab_comments = "Komentarze", tab_activity = "Aktywność",
+    comment_item = "[komentarz do „%s” @ %s] %s", comment_pos = "[komentarz @ %s] %s",
+    go_to = "Przejdź do %s", delete_comment = "Usuń komentarz",
+    added_by = "%s – dodane przez %s", at_time = " o %s", edited_by = ", ostatnio zmienione przez %s",
+    clip_label = "Klip „%s”", track_label = "Ścieżka „%s”",
+    clip_unsynced = "Klip „%s” – jeszcze nie zsynchronizowany", track_unsynced = "Ścieżka „%s” – jeszcze nie zsynchronizowana",
+    select_hint = "Zaznacz klip lub ścieżkę, żeby zobaczyć, kto je dodał.",
+    menu_settings = "Ustawienia połączenia…", menu_colorize = "Koloruj moje nowe klipy moim kolorem",
+    menu_resync = "Wymuś pełną synchronizację", menu_clear = "Wyczyść czat lokalnie",
+    st_on = "Połączono", st_connecting = "Łączenie…", st_error = "Problem z połączeniem", st_off = "Rozłączono",
+    pending = "   ↑%d  ↓%d  oczekuje: %d", recording_wait = "   nagrywanie – zmiany innych czekają",
+    connect = "Połącz", disconnect = "Rozłącz", menu = "Menu",
+    header = "Pokój: %s   •   Ty: %s   •   %s", online = "Online:", only_you = "tylko Ty",
+    in_app = "%s  (aplikacja Sesja)", input_ph = "Napisz wiadomość (Enter = wyślij na czat)…", send = "Wyślij",
+    comment_on = "Komentarz do „%s”", comment_at = "Komentarz @ %s",
+  },
+  en = {
+    track_add = "added track “%s”", track_edit = "changed track “%s”", track_del = "deleted track “%s”",
+    item_add = "added clip “%s” on track “%s” @ %s", item_edit = "edited clip “%s” (%s)", item_del = "deleted clip “%s”",
+    order = "reordered the tracks", tempo = "set the tempo to %.2f BPM", comment_del = "deleted a comment",
+    no_name = "unnamed", clip = "clip",
+    upload_failed = "Could not upload file %s", conn_error = "Connection error", server_error = "Server error",
+    no_curl = "Cannot start curl (%s)", no_answer = "No answer from the server (%s)",
+    state_error = "Could not load the project state", cant_connect = "Cannot connect",
+    srv_bad_password = "Wrong server password", srv_bad_room = "Invalid room name",
+    undo_remote = "Multiplayer: changes from %s", undo_audio = "Multiplayer: downloaded audio",
+    undo_clear = "Multiplayer: clear project before loading", undo_load = "Multiplayer: load project from server",
+    full_sync = "full sync with the server", disconnected_msg = "disconnected",
+    loaded = "loaded project from the server: %d tracks, %d clips", host_msg = "you are the host – sending your project to the server",
+    join_q = "Room “%s” already has a project on the server.\n\nYES – load the project from the server (your current tracks will be removed, Ctrl+Z undoes it)\nNO – merge: load the server project and add your new tracks to it\nCANCEL – don’t connect",
+    settings_title = "REAPER Multiplayer – connection",
+    settings_fields = "Server address (http://IP:port),Room (letters/digits),Your nickname,Server password (optional),curl program,extrawidth=240",
+    settings_missing = "Enter the server address, room name and your nickname.",
+    tab_all = "All", tab_chat = "Chat", tab_comments = "Comments", tab_activity = "Activity",
+    comment_item = "[comment on “%s” @ %s] %s", comment_pos = "[comment @ %s] %s",
+    go_to = "Go to %s", delete_comment = "Delete comment",
+    added_by = "%s – added by %s", at_time = " at %s", edited_by = ", last changed by %s",
+    clip_label = "Clip “%s”", track_label = "Track “%s”",
+    clip_unsynced = "Clip “%s” – not synced yet", track_unsynced = "Track “%s” – not synced yet",
+    select_hint = "Select a clip or track to see who added it.",
+    menu_settings = "Connection settings…", menu_colorize = "Colour my new clips with my colour",
+    menu_resync = "Force full sync", menu_clear = "Clear chat locally",
+    st_on = "Connected", st_connecting = "Connecting…", st_error = "Connection problem", st_off = "Disconnected",
+    pending = "   ↑%d  ↓%d  waiting: %d", recording_wait = "   recording – others’ changes are waiting",
+    connect = "Connect", disconnect = "Disconnect", menu = "Menu",
+    header = "Room: %s   •   You: %s   •   %s", online = "Online:", only_you = "just you",
+    in_app = "%s  (Sesja app)", input_ph = "Write a message (Enter = send to chat)…", send = "Send",
+    comment_on = "Comment on “%s”", comment_at = "Comment @ %s",
+  },
+}
+local function T(key, ...)
+  local d = L[CFG.lang] or L.en
+  local s = d[key] or L.en[key] or key
+  if select("#", ...) > 0 then return string.format(s, ...) end
+  return s
+end
+local function server_msg(resp)
+  if resp and resp.code and (L.en["srv_" .. resp.code]) then return T("srv_" .. resp.code) end
+  return (resp and resp.error) or T("server_error")
+end
 
 local S -- stan sesji (reset przy każdym połączeniu)
 local function reset_state()
@@ -614,7 +697,7 @@ local function http_json(method, path, body, cb, timeout)
   cmd = cmd .. " " .. q(url(path))
   if not run(cmd) then
     local j = table.remove(jobs)
-    j.cb(nil, "Nie można uruchomić curl (" .. CFG.curl .. ")")
+    j.cb(nil, T("no_curl", CFG.curl))
   end
 end
 
@@ -665,7 +748,7 @@ local function poll_jobs()
         done = true
         os.remove(j.out)
         if j.inp then os.remove(j.inp) end
-        j.cb(nil, "Brak odpowiedzi serwera (" .. CFG.server .. ")")
+        j.cb(nil, T("no_answer", CFG.server))
       end
     else -- plik
       local sz = file_size(j.out)
@@ -731,13 +814,13 @@ end
 local function track_name(header, guid)
   local n = M.chunk_field(header or "", "NAME")
   n = unquote(n or "")
-  if n == "" then n = (guid and S.names[guid]) or "bez nazwy" end
+  if n == "" then n = (guid and S.names[guid]) or T("no_name") end
   return n
 end
 
 local function item_name(chunk)
   local n = unquote(M.chunk_field(chunk or "", "NAME") or "")
-  if n == "" then n = "klip" end
+  if n == "" then n = T("clip") end
   return n
 end
 
@@ -968,7 +1051,7 @@ local function apply_remote_ops(ops, undoName)
   end
   local names = {}
   for n in pairs(who) do names[#names + 1] = n end
-  r.Undo_EndBlock2(0, undoName or ("Multiplayer: zmiany od " .. table.concat(names, ", ")), -1)
+  r.Undo_EndBlock2(0, undoName or T("undo_remote", table.concat(names, ", ")), -1)
   r.PreventUIRefresh(-1)
   r.TrackList_AdjustWindows(false)
   r.UpdateArrange()
@@ -985,7 +1068,7 @@ local function process_pending()
       for _, id in ipairs(missing) do request_file(id) end
     end
   end
-  if #ready > 0 then apply_remote_ops(ready, "Multiplayer: pobrane audio") end
+  if #ready > 0 then apply_remote_ops(ready, T("undo_audio")) end
 end
 
 -------------------------------------------------------------------------------
@@ -1103,10 +1186,10 @@ local function note_op(op)
       kind = "track", author = isNew and user or S.meta[g].author,
       created = isNew and ts or S.meta[g].created, editor = user, ts = ts,
     }
-    feed_activity(op, (isNew and "dodaje ścieżkę „" or "zmienia ścieżkę „") .. name .. "”",
+    feed_activity(op, T(isNew and "track_add" or "track_edit", name),
       isNew and ("new" .. g) or op_key(op))
   elseif t == "track_del" then
-    feed_activity(op, "usuwa ścieżkę „" .. (S.names[g] or "?") .. "”", op_key(op))
+    feed_activity(op, T("track_del", S.names[g] or "?"), op_key(op))
     S.meta[g] = nil
   elseif t == "item" then
     local isNew = not S.meta[g]
@@ -1119,18 +1202,18 @@ local function note_op(op)
     local pos = tonumber(M.chunk_field(op.chunk, "POSITION") or "") or 0
     local tn = S.names[op.track or ""] or "?"
     if isNew then
-      feed_activity(op, "dodaje klip „" .. name .. "” na ścieżce „" .. tn .. "” @ " .. M.fmt_pos(pos),
+      feed_activity(op, T("item_add", name, tn, M.fmt_pos(pos)),
         "new" .. g)
     else
-      feed_activity(op, "edytuje klip „" .. name .. "” (" .. tn .. ")", op_key(op))
+      feed_activity(op, T("item_edit", name, tn), op_key(op))
     end
   elseif t == "item_del" then
-    feed_activity(op, "usuwa klip „" .. (S.names[g] or "?") .. "”", op_key(op))
+    feed_activity(op, T("item_del", S.names[g] or "?"), op_key(op))
     S.meta[g] = nil
   elseif t == "order" then
-    feed_activity(op, "zmienia kolejność ścieżek", "order")
+    feed_activity(op, T("order"), "order")
   elseif t == "tempo" then
-    feed_activity(op, string.format("ustawia tempo na %.2f BPM", tonumber(op.bpm) or 0), "tempo")
+    feed_activity(op, T("tempo", tonumber(op.bpm) or 0), "tempo")
   elseif t == "chat" then
     feed_add({ kind = "chat", user = user, text = op.text or "" })
   elseif t == "comment" and op.id then
@@ -1144,7 +1227,7 @@ local function note_op(op)
   elseif t == "comment_del" and op.id then
     S.comments[op.id] = nil
     for _, e in ipairs(FEED) do if e.kind == "comment" and e.id == op.id then e.deleted = true end end
-    feed_add({ kind = "act", user = user, text = "usuwa komentarz" })
+    feed_add({ kind = "act", user = user, text = T("comment_del") })
     rebuild_markers()
   end
 end
@@ -1203,7 +1286,7 @@ local function pump_transfers()
           else
             S.uploadFails[id] = (S.uploadFails[id] or 0) + 1
             if S.uploadFails[id] >= 3 then S.fileConfirmed[id] = true end -- poddajemy się
-            status_err("Nie udało się wysłać pliku " .. id)
+            status_err(T("upload_failed", id))
           end
         end)
       end
@@ -1273,14 +1356,14 @@ local function do_sync()
     if not resp then
       S.retryOps = (#sentOps > 0) and sentOps or nil
       S.state = "error"
-      status_err(err or "Błąd połączenia")
+      status_err(err or T("conn_error"))
       S.nextSync = now() + 3
       return
     end
     if not resp.ok then
       S.retryOps = (#sentOps > 0) and sentOps or nil
       S.state = "error"
-      status_err(resp.error or "Błąd serwera")
+      status_err(server_msg(resp))
       S.nextSync = now() + 5
       return
     end
@@ -1344,7 +1427,7 @@ local function apply_state(st, mode, synced)
     r.PreventUIRefresh(1)
     r.Undo_BeginBlock2(0)
     for i = r.CountTracks(0) - 1, 0, -1 do r.DeleteTrack(r.GetTrack(0, i)) end
-    r.Undo_EndBlock2(0, "Multiplayer: wyczyszczenie projektu przed wczytaniem", -1)
+    r.Undo_EndBlock2(0, T("undo_clear"), -1)
     r.PreventUIRefresh(-1)
   end
   local order, seen = {}, {}
@@ -1380,7 +1463,7 @@ local function apply_state(st, mode, synced)
   end
   if st.tempo and tonumber(st.tempo.bpm) then ops[#ops + 1] = { t = "tempo", bpm = st.tempo.bpm } end
 
-  apply_remote_ops(ops, "Multiplayer: wczytanie projektu z serwera")
+  apply_remote_ops(ops, T("undo_load"))
 
   -- linia bazowa: tylko obiekty, które są na serwerze
   local s2 = snapshot()
@@ -1406,7 +1489,7 @@ function start_resync()
     if S.cid ~= sessionCid then return end
     S.inflight = false
     if not st or not st.ok then
-      status_err((st and st.error) or err or "Błąd pobierania stanu")
+      status_err(st and server_msg(st) or err or T("state_error"))
       S.nextSync = now() + 3
       return
     end
@@ -1417,14 +1500,14 @@ function start_resync()
     apply_state(st, "merge", synced)
     S.lastSeq = tonumber(st.seq) or 0
     S.nextSync = 0
-    feed_add({ kind = "act", user = "system", text = "pełna synchronizacja z serwerem" })
+    feed_add({ kind = "act", user = "system", text = T("full_sync") })
   end, 60)
 end
 
 local function disconnect(silent)
   if S.state ~= "off" then
     save_synced()
-    if not silent then feed_add({ kind = "act", user = "system", text = "rozłączono" }) end
+    if not silent then feed_add({ kind = "act", user = "system", text = T("disconnected_msg") }) end
   end
   reset_state()
 end
@@ -1438,7 +1521,7 @@ local function connect()
     if S.cid ~= sessionCid then return end
     if not st or not st.ok then
       S.state = "error"
-      status_err((st and st.error) or err or "Nie można połączyć")
+      status_err(st and server_msg(st) or err or T("cant_connect"))
       return
     end
     local serverHas = next(st.tracks or {}) ~= nil
@@ -1446,12 +1529,7 @@ local function connect()
     local mode = "host"
     if serverHas then
       if localHas then
-        local ans = r.ShowMessageBox(
-          "Pokój „" .. CFG.room .. "” ma już projekt na serwerze.\n\n" ..
-          "TAK – wczytaj projekt z serwera (Twoje obecne ścieżki zostaną usunięte, można cofnąć Ctrl+Z)\n" ..
-          "NIE – połącz: wczytaj projekt z serwera i dodaj do niego Twoje nowe ścieżki\n" ..
-          "ANULUJ – nie łącz",
-          "REAPER Multiplayer", 3)
+        local ans = r.ShowMessageBox(T("join_q", CFG.room), "REAPER Multiplayer", 3)
         if ans == 6 then
           mode = "replace"
         elseif ans == 7 then
@@ -1474,11 +1552,11 @@ local function connect()
       for _ in pairs(st.tracks or {}) do nt = nt + 1 end
       for _ in pairs(st.items or {}) do ni = ni + 1 end
       feed_add({ kind = "act", user = "system",
-        text = string.format("wczytano projekt z serwera: %d ścieżek, %d klipów", nt, ni) })
+        text = T("loaded", nt, ni) })
     else
       S.baseTempo = (r.GetProjectTimeSignature2(0))
       rebuild_markers()
-      feed_add({ kind = "act", user = "system", text = "jesteś gospodarzem – wysyłam Twój projekt na serwer" })
+      feed_add({ kind = "act", user = "system", text = T("host_msg") })
     end
     S.lastSeq = tonumber(st.seq) or 0
     S.state = "on"
@@ -1492,8 +1570,7 @@ end
 -------------------------------------------------------------------------------
 local function open_settings()
   local defs = table.concat({ CFG.server, CFG.room, CFG.user, CFG.password, CFG.curl }, ",")
-  local ok, res = r.GetUserInputs("REAPER Multiplayer – połączenie", 5,
-    "Adres serwera (http://IP:port),Pokój (litery/cyfry),Twój nick,Hasło serwera (opcjonalne),Program curl,extrawidth=240",
+  local ok, res = r.GetUserInputs(T("settings_title"), 5, T("settings_fields"),
     defs)
   if not ok then return false end
   local vals = {}
@@ -1505,7 +1582,7 @@ local function open_settings()
   local pass = safe_key(vals[4] or "")
   local curl = (vals[5] or ""):gsub("^%s+", ""):gsub("%s+$", "")
   if server == "" or room == "" or user == "" then
-    r.ShowMessageBox("Podaj adres serwera, nazwę pokoju i swój nick.", "REAPER Multiplayer", 0)
+    r.ShowMessageBox(T("settings_missing"), "REAPER Multiplayer", 0)
     return false
   end
   CFG.server, CFG.room, CFG.user, CFG.password = server, room, user, pass
@@ -1523,7 +1600,7 @@ end
 -------------------------------------------------------------------------------
 local UI = { input = "", tab = 1, scroll = 0, caret = 0, hits = {} }
 local mouse = { l = false, r = false, x = 0, y = 0, clicked = false, rclicked = false }
-local TABS = { "Wszystko", "Czat", "Komentarze", "Aktywność" }
+local TABS = { "tab_all", "tab_chat", "tab_comments", "tab_activity" }
 
 local function set_rgb(rr, gg, bb, a) gfx.set(rr / 255, gg / 255, bb / 255, a or 1) end
 local function set_hex(hex, a)
@@ -1582,8 +1659,8 @@ end
 
 local function entry_text(e)
   if e.kind == "comment" then
-    if e.itemName then return "[komentarz do „" .. e.itemName .. "” @ " .. M.fmt_pos(e.pos) .. "] " .. e.text end
-    return "[komentarz @ " .. M.fmt_pos(e.pos) .. "] " .. e.text
+    if e.itemName then return T("comment_item", e.itemName, M.fmt_pos(e.pos), e.text) end
+    return T("comment_pos", M.fmt_pos(e.pos), e.text)
   end
   if e.kind == "act" and (e.n or 1) > 1 then return e.text .. " (×" .. e.n .. ")" end
   return e.text
@@ -1669,7 +1746,7 @@ local function draw_feed(x, y, w, h)
           r.SetEditCurPos(hit.e.pos, true, false)
         else
           gfx.x, gfx.y = mouse.x, mouse.y
-          local choice = gfx.showmenu("Przejdź do " .. M.fmt_pos(hit.e.pos) .. "|Usuń komentarz")
+          local choice = gfx.showmenu(T("go_to", M.fmt_pos(hit.e.pos)) .. "|" .. T("delete_comment"))
           if choice == 1 then
             r.SetEditCurPos(hit.e.pos, true, false)
           elseif choice == 2 and S.state == "on" then
@@ -1686,11 +1763,11 @@ end
 local function inspector_text()
   local it = r.GetSelectedMediaItem(0, 0)
   local function fmt(m, label)
-    local s = label .. " – dodane przez " .. (m.author or "?")
-    if m.created then s = s .. " o " .. os.date("%H:%M", math.floor(m.created)) end
+    local s = T("added_by", label, m.author or "?")
+    if m.created then s = s .. T("at_time", os.date("%H:%M", math.floor(m.created))) end
     if m.editor and m.editor ~= m.author then
-      s = s .. ", ostatnio zmienione przez " .. m.editor
-      if m.ts then s = s .. " o " .. os.date("%H:%M", math.floor(m.ts)) end
+      s = s .. T("edited_by", m.editor)
+      if m.ts then s = s .. T("at_time", os.date("%H:%M", math.floor(m.ts))) end
     end
     return s
   end
@@ -1698,19 +1775,19 @@ local function inspector_text()
     local g = item_guid(it)
     local m = S.meta[g]
     local take = r.GetActiveTake(it)
-    local name = take and r.GetTakeName(take) or "klip"
-    if m then return fmt(m, "Klip „" .. name .. "”") end
-    return "Klip „" .. name .. "” – jeszcze nie zsynchronizowany"
+    local name = take and r.GetTakeName(take) or T("clip")
+    if m then return fmt(m, T("clip_label", name)) end
+    return T("clip_unsynced", name)
   end
   local tr = r.GetSelectedTrack(0, 0)
   if tr then
     local m = S.meta[r.GetTrackGUID(tr)]
     local _, name = r.GetSetMediaTrackInfo_String(tr, "P_NAME", "", false)
-    if name == "" then name = "bez nazwy" end
-    if m then return fmt(m, "Ścieżka „" .. name .. "”") end
-    return "Ścieżka „" .. name .. "” – jeszcze nie zsynchronizowana"
+    if name == "" then name = T("no_name") end
+    if m then return fmt(m, T("track_label", name)) end
+    return T("track_unsynced", name)
   end
-  return "Zaznacz klip lub ścieżkę, żeby zobaczyć, kto je dodał."
+  return T("select_hint")
 end
 
 -- Komentarz do zaznaczonego klipu: znacznik na samym klipie (take marker),
@@ -1729,7 +1806,7 @@ local function add_item_comment(item, txt, id)
     r.SetTakeMarker(take, -1, TAKE_MARK_PREFIX .. CFG.user .. ": " .. txt, (cur - ipos) * rate + offs, col)
     r.UpdateArrange()
   end
-  local name = take and r.GetTakeName(take) or "klip"
+  local name = take and r.GetTakeName(take) or T("clip")
   return { t = "comment", id = id, pos = cur, text = txt, item = item_guid(item), itemName = name }
 end
 
@@ -1772,10 +1849,10 @@ end
 local function show_menu()
   gfx.x, gfx.y = mouse.x, mouse.y
   local items = {
-    "Ustawienia połączenia…",
-    (CFG.colorize and "!" or "") .. "Koloruj moje nowe klipy moim kolorem",
-    (S.state == "on" and "" or "#") .. "Wymuś pełną synchronizację",
-    "Wyczyść czat lokalnie",
+    T("menu_settings"),
+    (CFG.colorize and "!" or "") .. T("menu_colorize"),
+    (S.state == "on" and "" or "#") .. T("menu_resync"),
+    T("menu_clear"),
     "#REAPER Multiplayer v" .. VERSION,
   }
   local c = gfx.showmenu(table.concat(items, "|"))
@@ -1830,13 +1907,13 @@ local function draw()
   local st = S.state
   local dot, label
   if st == "on" then
-    dot, label = { 80, 200, 120 }, "Połączono"
+    dot, label = { 80, 200, 120 }, T("st_on")
   elseif st == "connecting" then
-    dot, label = { 230, 190, 70 }, "Łączenie…"
+    dot, label = { 230, 190, 70 }, T("st_connecting")
   elseif st == "error" then
-    dot, label = { 230, 80, 80 }, "Problem z połączeniem"
+    dot, label = { 230, 80, 80 }, T("st_error")
   else
-    dot, label = { 120, 120, 120 }, "Rozłączono"
+    dot, label = { 120, 120, 120 }, T("st_off")
   end
   set_rgb(dot[1], dot[2], dot[3])
   gfx.circle(pad + 6, y + 9, 5, 1)
@@ -1852,30 +1929,29 @@ local function draw()
   if nup + ndown + npend > 0 then
     gfx.setfont(2)
     set_rgb(150, 190, 240)
-    gfx.drawstr(string.format("   ↑%d  ↓%d  oczekuje: %d", nup, ndown, npend))
+    gfx.drawstr(T("pending", nup, ndown, npend))
   end
   if #S.deferred > 0 then
     gfx.setfont(2)
     set_rgb(240, 120, 120)
-    gfx.drawstr("   nagrywanie – zmiany innych czekają")
+    gfx.drawstr(T("recording_wait"))
   end
 
   local bw = 84
-  if button(W - pad - bw, y - 1, bw, 22, (st == "off") and "Połącz" or "Rozłącz") then
+  if button(W - pad - bw, y - 1, bw, 22, (st == "off") and T("connect") or T("disconnect")) then
     if st == "off" then
       if (CFG.user ~= "" or open_settings()) then connect() end
     else
       disconnect()
     end
   end
-  if button(W - pad - bw - 6 - 60, y - 1, 60, 22, "Menu") then show_menu() end
+  if button(W - pad - bw - 6 - 60, y - 1, 60, 22, T("menu")) then show_menu() end
   y = y + 26
 
   gfx.setfont(2)
   set_rgb(150, 150, 158)
   gfx.x, gfx.y = pad, y
-  gfx.drawstr("Pokój: " .. CFG.room .. "   •   Ty: " .. (CFG.user ~= "" and CFG.user or "?") ..
-    "   •   " .. CFG.server)
+  gfx.drawstr(T("header", CFG.room, CFG.user ~= "" and CFG.user or "?", CFG.server))
   y = y + 18
   if S.err then
     set_rgb(240, 120, 120)
@@ -1889,13 +1965,13 @@ local function draw()
   gfx.setfont(3)
   set_rgb(200, 200, 205)
   gfx.x, gfx.y = pad, y
-  gfx.drawstr("Online:")
-  local cx = pad + gfx.measurestr("Online:") + 10
+  gfx.drawstr(T("online"))
+  local cx = pad + gfx.measurestr(T("online")) + 10
   gfx.setfont(2)
   if #S.users == 0 then
     set_rgb(120, 120, 128)
     gfx.x, gfx.y = cx, y + 1
-    gfx.drawstr(st == "on" and "tylko Ty" or "–")
+    gfx.drawstr(st == "on" and T("only_you") or "–")
   end
   for _, u in ipairs(S.users) do
     local txt = u.name
@@ -1907,7 +1983,7 @@ local function draw()
       txt = txt .. "  @ " .. M.fmt_pos(u.pos)
     end
     if u.sel and u.sel ~= "" then txt = txt .. " · " .. u.sel end
-    if u.app then txt = u.name .. "  (aplikacja Sesja)" end
+    if u.app then txt = T("in_app", u.name) end
     local tw = gfx.measurestr(txt) + 24
     if cx + tw > W - pad then
       cx = pad
@@ -1942,7 +2018,8 @@ local function draw()
 
   -- zakładki
   local tx = pad
-  for i, name in ipairs(TABS) do
+  for i, key in ipairs(TABS) do
+    local name = T(key)
     gfx.setfont(2)
     local tw = gfx.measurestr(name) + 20
     if button(tx, y, tw, 22, name, UI.tab == i) then
@@ -1971,7 +2048,7 @@ local function draw()
   gfx.x, gfx.y = pad + 8, iy + 5
   if UI.input == "" then
     set_rgb(110, 110, 118)
-    gfx.drawstr("Napisz wiadomość (Enter = wyślij na czat)…")
+    gfx.drawstr(T("input_ph"))
   else
     set_rgb(235, 235, 240)
     gfx.drawstr(shown)
@@ -1983,16 +2060,16 @@ local function draw()
   end
 
   local by = iy + 32
-  if button(pad, by, 90, 22, "Wyślij") then send_input(false) end
+  if button(pad, by, 90, 22, T("send")) then send_input(false) end
   local selItem = r.GetSelectedMediaItem(0, 0)
   local cl
   if selItem then
     local tk = r.GetActiveTake(selItem)
-    local nm = tk and r.GetTakeName(tk) or "klip"
+    local nm = tk and r.GetTakeName(tk) or T("clip")
     if #nm > 24 then nm = nm:sub(1, (utf8.offset(nm, 22) or 23) - 1) .. "…" end
-    cl = "Komentarz do „" .. nm .. "”"
+    cl = T("comment_on", nm)
   else
-    cl = "Komentarz @ " .. M.fmt_pos(r.GetCursorPosition())
+    cl = T("comment_at", M.fmt_pos(r.GetCursorPosition()))
   end
   gfx.setfont(2)
   local cw = gfx.measurestr(cl) + 24

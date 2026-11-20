@@ -24,13 +24,21 @@
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["$APPCACHE/**"]
+        "scope": [
+          "$APPCACHE/**"
+        ]
       }
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi", "dmg", "app", "appimage", "deb"],
+    "targets": [
+      "nsis",
+      "dmg",
+      "app",
+      "appimage",
+      "deb"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -39,7 +47,37 @@
       "icons/icon.ico"
     ],
     "category": "Music",
-    "shortDescription": "Wspólne nagrywanie w REAPERze",
-    "longDescription": "Sesja instaluje mod REAPER Multiplayer i pozwala nagrywać jeden projekt REAPERa z kilku miejsc naraz: czat, komentarze przy klipach, lista nagrań i kto co dodał."
+    "shortDescription": "Sesja – REAPER Multiplayer",
+    "longDescription": "Sesja instaluje mod REAPER Multiplayer i pozwala nagrywać jeden projekt REAPERa z kilku miejsc naraz: czat, komentarze przy klipach, lista nagrań i kto co dodał.",
+    "publisher": "Sesja",
+    "copyright": "© 2026 Autorzy projektu Sesja · MIT",
+    "homepage": "https://github.com/krixishere/repomulitplayer",
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "installer/header.bmp",
+        "sidebarImage": "installer/sidebar.bmp",
+        "installMode": "currentUser",
+        "languages": [
+          "Polish",
+          "English",
+          "German",
+          "Spanish",
+          "French"
+        ],
+        "customLanguageFiles": {
+          "Polish": "installer/Polish.nsh"
+        },
+        "displayLanguageSelector": true,
+        "startMenuFolder": "Sesja"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
   }
 }

@@ -52,15 +52,39 @@ Interfejs to zwykłe HTML/CSS/JS w `app/ui/` (bez kroku budowania). Podgląd w p
 z przykładowymi danymi: `python3 -m http.server -d app/ui` i otwórz `index.html`
 (`?demo=onboard` pokazuje instalator powitalny).
 
-### Wydania i auto-aktualizacje
+### Instalator
 
-1. Podnieś wersję w `app/src-tauri/Cargo.toml` i `app/src-tauri/tauri.conf.json`, dopisz zmiany do `CHANGELOG.md`.
-2. `git tag v1.0.1 && git push origin v1.0.1`.
-3. GitHub Actions (`.github/workflows/release.yml`) zbuduje instalatory na Windows, macOS i Linuksa
-   i opublikuje wydanie. Zainstalowane aplikacje przy starcie zobaczą nową wersję i zaproponują instalację.
+Na Windows powstaje **`Sesja_X.Y.Z_x64-setup.exe`** – klasyczny instalator z ikoną i nazwą aplikacji:
+wybór języka (polski, angielski, niemiecki, hiszpański, francuski), własne grafiki kreatora,
+instalacja do folderu użytkownika (bez uprawnień administratora), skróty w menu Start i na pulpicie,
+deinstalator w „Aplikacje i funkcje”. Jeśli na komputerze brakuje WebView2, instalator sam go pobierze.
+Na macOS powstaje `.dmg`, na Linuksie `.AppImage` i `.deb`.
+
+Grafiki kreatora leżą w `app/src-tauri/installer/` (BMP), a ich źródło to `app/ui/installer-art.html`.
+
+### Języki
+
+Aplikacja: polski, angielski, niemiecki, hiszpański, francuski – wykrywane z systemu, do zmiany
+w Ustawieniach bez restartu. Słowniki są w `app/ui/i18n.js` (komunikaty z Rusta w `src/i18n.rs`).
+Mod w REAPERze: polski i angielski; język ustawia aplikacja.
+`node tests/check_i18n.js` sprawdza, że w żadnym języku nie brakuje tekstu.
+
+### Wydania i auto-aktualizacje (automatycznie)
+
+Workflow `.github/workflows/release.yml`:
+
+- **każdy push** – budowanie próbne na Windows, macOS i Linuksie; gotowe instalatory są do pobrania
+  w zakładce *Actions → uruchomienie → Artifacts*,
+- **push na `main` z nową wersją** – automatyczne wydanie `vX.Y.Z` z instalatorami i opisem z `CHANGELOG.md`.
+
+Jak wydać nową wersję:
+
+1. Podnieś `version` w `app/src-tauri/tauri.conf.json` i `app/src-tauri/Cargo.toml` (muszą być równe).
+2. Dodaj sekcję `## Sesja X.Y.Z` na górze `CHANGELOG.md`.
+3. Scal do `main`. Wydanie powstanie samo, a zainstalowane aplikacje zaproponują aktualizację.
 
 Instalatory nie są podpisane certyfikatem, więc Windows SmartScreen i macOS Gatekeeper przy pierwszym
-uruchomieniu pokażą ostrzeżenie.
+uruchomieniu pokażą ostrzeżenie („Więcej informacji → Uruchom mimo to”).
 
 ### Serwer bez okna (np. na VPS)
 

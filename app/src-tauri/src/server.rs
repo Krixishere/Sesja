@@ -248,7 +248,7 @@ impl HostServer {
     pub fn start(port: u16, password: String, data: PathBuf) -> Result<HostServer, String> {
         fs::create_dir_all(&data).map_err(|e| e.to_string())?;
         let server = Server::http(("0.0.0.0", port))
-            .map_err(|e| format!("Nie mogę uruchomić serwera na porcie {port}: {e}"))?;
+            .map_err(|e| crate::i18n::tf("port_busy", &[&port, &e]))?;
         let server = Arc::new(server);
         let shared = Arc::new(Shared { data, password, rooms: Mutex::new(HashMap::new()) });
         let stop = Arc::new(AtomicBool::new(false));
@@ -303,11 +303,12 @@ fn json_response(code: u16, mut obj: Map<String, Value>) -> Response<std::io::Cu
         .with_header(Header::from_bytes("Content-Type", "application/json; charset=utf-8").unwrap())
 }
 
-fn err(code: u16, msg: &str) -> Response<std::io::Cursor<Vec<u8>>> {
+fn err(status: u16, code: &str, msg: &str) -> Response<std::io::Cursor<Vec<u8>>> {
     let mut m = Map::new();
     m.insert("ok".into(), json!(false));
+    m.insert("code".into(), json!(code));
     m.insert("error".into(), json!(msg));
-    json_response(code, m)
+    json_response(status, m)
 }
 
 fn query(url: &str) -> (String, HashMap<String, String>) {
@@ -360,14 +361,14 @@ fn handle(sh: &Shared, mut req: Request) {
         return;
     }
     if !sh.password.is_empty() && header(&req, "X-RMP-Key") != Some(sh.password.as_str()) {
-        let _ = req.respond(err(403, "Złe hasło serwera"));
+        let _ = req.respond(err(403, "bad_password", "Wrong server password"));
         return;
     }
 
     match (method, path.as_str()) {
         (Method::Get, "/api/state") => {
             let Some(name) = q.get("room").filter(|r| safe_name(r)) else {
-                let _ = req.respond(err(400, "Niepoprawna nazwa pokoju"));
+                let _ = req.respond(err(400, "bad_room", "Invalid room name"));
                 return;
             };
             let room = sh.room(name);
@@ -387,11 +388,11 @@ fn handle(sh: &Shared, mut req: Request) {
         }
         (Method::Get, "/api/file") => {
             let (Some(name), Some(id)) = (q.get("room"), q.get("id")) else {
-                let _ = req.respond(err(400, "Brak parametrów"));
+                let _ = req.respond(err(400, "bad_request", "Missing parameters"));
                 return;
             };
             if !safe_name(name) || !safe_name(id) {
-                let _ = req.respond(err(400, "Zła nazwa"));
+                let _ = req.respond(err(400, "bad_name", "Invalid name"));
                 return;
             }
             let p = sh.room(name).lock().unwrap().file(id);
@@ -402,17 +403,17 @@ fn handle(sh: &Shared, mut req: Request) {
                     ));
                 }
                 Err(_) => {
-                    let _ = req.respond(err(404, "Brak pliku"));
+                    let _ = req.respond(err(404, "no_file", "File not found"));
                 }
             }
         }
         (Method::Put, "/api/file") => {
             let (Some(name), Some(id)) = (q.get("room").cloned(), q.get("id").cloned()) else {
-                let _ = req.respond(err(400, "Brak parametrów"));
+                let _ = req.respond(err(400, "bad_request", "Missing parameters"));
                 return;
             };
             if !safe_name(&name) || !safe_name(&id) {
-                let _ = req.respond(err(400, "Zła nazwa"));
+                let _ = req.respond(err(400, "bad_name", "Invalid name"));
                 return;
             }
             let expected = req.body_length();
@@ -435,22 +436,22 @@ fn handle(sh: &Shared, mut req: Request) {
                 }
                 _ => {
                     let _ = fs::remove_file(&tmp);
-                    let _ = req.respond(err(400, "Przerwany upload"));
+                    let _ = req.respond(err(400, "bad_upload", "Upload interrupted"));
                 }
             }
         }
         (Method::Post, "/api/sync") => {
             let mut body = String::new();
             if req.as_reader().read_to_string(&mut body).is_err() {
-                let _ = req.respond(err(400, "Zły JSON"));
+                let _ = req.respond(err(400, "bad_json", "Invalid JSON"));
                 return;
             }
             let Ok(b) = serde_json::from_str::<Value>(&body) else {
-                let _ = req.respond(err(400, "Zły JSON"));
+                let _ = req.respond(err(400, "bad_json", "Invalid JSON"));
                 return;
             };
             let Some(name) = b["room"].as_str().filter(|r| safe_name(r)) else {
-                let _ = req.respond(err(400, "Niepoprawna nazwa pokoju"));
+                let _ = req.respond(err(400, "bad_room", "Invalid room name"));
                 return;
             };
             let user: String = b["user"].as_str().unwrap_or("anon").chars().take(40).collect();
@@ -499,7 +500,7 @@ fn handle(sh: &Shared, mut req: Request) {
             let _ = req.respond(json_response(200, m));
         }
         _ => {
-            let _ = req.respond(err(404, "Nieznany adres"));
+            let _ = req.respond(err(404, "not_found", "Unknown endpoint"));
         }
     }
 }
@@ -517,17 +518,18 @@ pub fn local_addresses(port: u16) -> Vec<Value> {
                 continue;
             }
             let s = ip.to_string();
+            // rodzaj sieci – interfejs tłumaczy kody: tailscale, lan, other, local
             let kind = if s.starts_with("100.") {
-                "Tailscale"
+                "tailscale"
             } else if s.starts_with("192.168.") || s.starts_with("10.") || s.starts_with("172.") {
-                "sieć lokalna"
+                "lan"
             } else {
-                "inna sieć"
+                "other"
             };
             out.push(json!({"url": format!("http://{s}:{port}"), "kind": kind, "iface": i.name}));
         }
     }
-    out.push(json!({"url": format!("http://127.0.0.1:{port}"), "kind": "ten komputer", "iface": "lo"}));
+    out.push(json!({"url": format!("http://127.0.0.1:{port}"), "kind": "local", "iface": "lo"}));
     out
 }
 

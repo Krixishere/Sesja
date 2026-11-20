@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
+mod i18n;
 mod reaper;
 mod server;
 mod session;
@@ -41,6 +42,10 @@ fn save_config(st: State<AppState>, mut cfg: Config) -> Result<Config, String> {
     } else {
         format!("http://{s}")
     };
+    if !i18n::LANGS.contains(&cfg.lang.as_str()) {
+        cfg.lang = String::new();
+    }
+    i18n::set(&cfg.lang);
     config::save(&cfg)?;
     *st.config.lock().unwrap() = cfg.clone();
     Ok(cfg)
@@ -74,7 +79,7 @@ async fn pick_reaper_folder(app: AppHandle) -> Result<Option<reaper::ReaperInfo>
     let picked = app
         .dialog()
         .file()
-        .set_title("Wskaż folder, w którym jest zainstalowany REAPER")
+        .set_title(i18n::t("pick_title"))
         .blocking_pick_folder();
     let Some(fp) = picked else { return Ok(None) };
     let path = fp.into_path().map_err(|e| e.to_string())?;
@@ -103,6 +108,7 @@ fn install_mod(st: State<AppState>, resource: String, autostart: bool) -> Result
         room: &cfg.room,
         user: &cfg.nick,
         password: &cfg.password,
+        lang: i18n::current(),
     });
     let rep = reaper::install(&resource, autostart, conn)?;
     let mut c = st.config.lock().unwrap();
@@ -126,13 +132,13 @@ fn reaper_running() -> bool {
 fn launch_reaper(st: State<AppState>) -> Result<(), String> {
     let exe = st.config.lock().unwrap().reaper_exe.clone();
     let info = reaper::detect(exe.as_deref(), None);
-    let exe = info.exe.ok_or("Nie znam ścieżki do REAPERa")?;
+    let exe = info.exe.ok_or_else(|| i18n::t("no_reaper_path"))?;
     let r = if cfg!(target_os = "macos") {
         std::process::Command::new("open").arg(&exe).spawn()
     } else {
         std::process::Command::new(&exe).spawn()
     };
-    r.map(|_| ()).map_err(|e| format!("Nie mogę uruchomić REAPERa: {e}"))
+    r.map(|_| ()).map_err(|e| i18n::tf("cant_launch", &[&"REAPER", &e]))
 }
 
 // ---------------------------------------------------------------- sesja
@@ -141,7 +147,7 @@ fn launch_reaper(st: State<AppState>) -> Result<(), String> {
 fn session_connect(app: AppHandle, st: State<AppState>) -> Result<(), String> {
     let cfg = st.config.lock().unwrap().clone();
     if cfg.nick.is_empty() || cfg.server.is_empty() || cfg.room.is_empty() {
-        return Err("Uzupełnij nick, adres serwera i pokój w ustawieniach.".into());
+        return Err(i18n::t("fill_profile"));
     }
     let conn = session::Conn { server: cfg.server, room: cfg.room, user: cfg.nick, password: cfg.password };
     let mut s = st.session.lock().unwrap();
@@ -171,7 +177,7 @@ fn send_chat(st: State<AppState>, text: String) -> Result<(), String> {
         return Ok(());
     }
     let s = st.session.lock().unwrap();
-    let s = s.as_ref().ok_or("Nie jesteś połączony z sesją.")?;
+    let s = s.as_ref().ok_or_else(|| i18n::t("not_connected"))?;
     s.send(json!({"t": "chat", "text": text}));
     Ok(())
 }
@@ -185,7 +191,7 @@ fn send_comment(
     item_name: Option<String>,
 ) -> Result<(), String> {
     let s = st.session.lock().unwrap();
-    let s = s.as_ref().ok_or("Nie jesteś połączony z sesją.")?;
+    let s = s.as_ref().ok_or_else(|| i18n::t("not_connected"))?;
     let id = format!(
         "app-{}",
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
@@ -197,7 +203,7 @@ fn send_comment(
 #[tauri::command]
 fn delete_comment(st: State<AppState>, id: String) -> Result<(), String> {
     let s = st.session.lock().unwrap();
-    let s = s.as_ref().ok_or("Nie jesteś połączony z sesją.")?;
+    let s = s.as_ref().ok_or_else(|| i18n::t("not_connected"))?;
     s.send(json!({"t": "comment_del", "id": id}));
     Ok(())
 }
@@ -207,7 +213,7 @@ async fn fetch_audio(app: AppHandle, id: String) -> Result<String, String> {
     let conn = {
         let st = app.state::<AppState>();
         let s = st.session.lock().unwrap();
-        s.as_ref().ok_or("Nie jesteś połączony z sesją.")?.conn()
+        s.as_ref().ok_or_else(|| i18n::t("not_connected"))?.conn()
     };
     let cache = app.path().app_cache_dir().map_err(|e| e.to_string())?;
     let p = tauri::async_runtime::spawn_blocking(move || session::fetch_file(&conn, &id, cache))
@@ -273,7 +279,7 @@ async fn install_update(app: AppHandle, url: String, name: String) -> Result<(),
 #[tauri::command]
 fn open_url(app: AppHandle, url: String) -> Result<(), String> {
     if !(url.starts_with("https://") || url.starts_with("http://")) {
-        return Err("Niedozwolony adres".into());
+        return Err(i18n::t("bad_url"));
     }
     app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
@@ -312,7 +318,7 @@ fn headless_server(args: &[String]) -> ! {
     }
     match server::HostServer::start(port, config::safe(&password), data.clone()) {
         Ok(_srv) => {
-            println!("Sesja: serwer działa na porcie {port} (dane: {})", data.display());
+            println!("Sesja: server running on port {port} (data: {})", data.display());
             for a in server::local_addresses(port) {
                 println!("  {}  ({})", a["url"].as_str().unwrap_or(""), a["kind"].as_str().unwrap_or(""));
             }
@@ -335,7 +341,11 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState { config: Mutex::new(config::load()), ..Default::default() })
+        .manage({
+            let cfg = config::load();
+            i18n::set(&cfg.lang);
+            AppState { config: Mutex::new(cfg), ..Default::default() }
+        })
         .setup(|app| {
             let st = app.state::<AppState>();
             let cfg = st.config.lock().unwrap().clone();

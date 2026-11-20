@@ -79,7 +79,7 @@ pub fn check() -> Result<UpdateInfo, String> {
         .set("User-Agent", "Sesja-updater")
         .set("Accept", "application/vnd.github+json")
         .call()
-        .map_err(|e| format!("Nie udało się sprawdzić aktualizacji: {e}"))?;
+        .map_err(|e| crate::i18n::tf("update_check", &[&e]))?;
     let list: Vec<Value> = resp.into_json().map_err(|e| e.to_string())?;
     let releases: Vec<&Value> = list
         .iter()
@@ -112,7 +112,7 @@ pub fn check() -> Result<UpdateInfo, String> {
 /// Pobiera instalator nowej wersji (z postępem) i go uruchamia.
 pub fn install(app: &AppHandle, url: &str, name: &str) -> Result<(), String> {
     if !url.starts_with(&format!("https://github.com/{REPO}/releases/download/")) {
-        return Err("Nieznane źródło aktualizacji".into());
+        return Err(crate::i18n::t("update_source"));
     }
     let safe: String = name
         .chars()
@@ -123,7 +123,7 @@ pub fn install(app: &AppHandle, url: &str, name: &str) -> Result<(), String> {
         .get(url)
         .set("User-Agent", "Sesja-updater")
         .call()
-        .map_err(|e| format!("Pobieranie nie powiodło się: {e}"))?;
+        .map_err(|e| crate::i18n::tf("download_failed", &[&e]))?;
     let total: u64 = resp.header("Content-Length").and_then(|v| v.parse().ok()).unwrap_or(0);
     let mut reader = resp.into_reader();
     let mut f = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
@@ -166,7 +166,7 @@ fn launch(path: &PathBuf) -> Result<(), String> {
         }
         Command::new("xdg-open").arg(path.parent().unwrap_or(path)).spawn()
     };
-    r.map(|_| ()).map_err(|e| format!("Nie mogę uruchomić instalatora: {e}"))
+    r.map(|_| ()).map_err(|e| crate::i18n::tf("cant_launch", &[&p, &e]))
 }
 
 #[cfg(test)]

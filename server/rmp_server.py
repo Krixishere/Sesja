@@ -300,8 +300,9 @@ def make_handler(srv):
             self.end_headers()
             self.wfile.write(body)
 
-        def _err(self, code, msg):
-            self._json(code, {"ok": False, "error": msg})
+        def _err(self, status, code, msg):
+            # "code" pozwala klientom pokazać błąd w języku użytkownika
+            self._json(status, {"ok": False, "code": code, "error": msg})
 
         def _auth(self):
             if not srv.password:
@@ -309,7 +310,7 @@ def make_handler(srv):
             key = self.headers.get("X-RMP-Key", "")
             if key == srv.password:
                 return True
-            self._err(403, "Złe hasło serwera")
+            self._err(403, "bad_password", "Wrong server password")
             return False
 
         def _query(self):
@@ -319,7 +320,7 @@ def make_handler(srv):
 
         def _room_from(self, name):
             if not name or not SAFE_RE.match(name):
-                self._err(400, "Niepoprawna nazwa pokoju")
+                self._err(400, "bad_room", "Invalid room name")
                 return None
             return srv.room(name)
 
@@ -354,7 +355,7 @@ def make_handler(srv):
                     return
                 fid = q.get("id", "")
                 if not SAFE_RE.match(fid) or not room.has_file(fid):
-                    return self._err(404, "Brak pliku")
+                    return self._err(404, "no_file", "File not found")
                 p = room.file_path(fid)
                 size = os.path.getsize(p)
                 self.send_response(200)
@@ -368,7 +369,7 @@ def make_handler(srv):
                             break
                         self.wfile.write(b)
                 return
-            self._err(404, "Nieznany adres")
+            self._err(404, "not_found", "Unknown endpoint")
 
         # -------------------------------------------------- POST
         def do_POST(self):
@@ -376,10 +377,10 @@ def make_handler(srv):
             if not self._auth():
                 return
             if path != "/api/sync":
-                return self._err(404, "Nieznany adres")
+                return self._err(404, "not_found", "Unknown endpoint")
             body = self._read_json()
             if not isinstance(body, dict):
-                return self._err(400, "Zły JSON")
+                return self._err(400, "bad_json", "Invalid JSON")
             room = self._room_from(body.get("room"))
             if room is None:
                 return
@@ -421,16 +422,16 @@ def make_handler(srv):
             if not self._auth():
                 return
             if path != "/api/file":
-                return self._err(404, "Nieznany adres")
+                return self._err(404, "not_found", "Unknown endpoint")
             room = self._room_from(q.get("room"))
             if room is None:
                 return
             fid = q.get("id", "")
             if not SAFE_RE.match(fid):
-                return self._err(400, "Zła nazwa pliku")
+                return self._err(400, "bad_name", "Invalid file name")
             n = int(self.headers.get("Content-Length") or -1)
             if n < 0 or n > MAX_UPLOAD:
-                return self._err(400, "Brak lub zły Content-Length")
+                return self._err(400, "bad_upload", "Missing or invalid Content-Length")
             dest = room.file_path(fid)
             tmp = dest + ".part%d" % threading.get_ident()
             left = n
@@ -443,7 +444,7 @@ def make_handler(srv):
                     left -= len(b)
             if left != 0:
                 os.remove(tmp)
-                return self._err(400, "Przerwany upload")
+                return self._err(400, "bad_upload", "Upload interrupted")
             os.replace(tmp, dest)
             self._json(200, {"ok": True, "id": fid, "size": n})
 

@@ -356,6 +356,8 @@ p { margin: 0; }
 .ob-body > *:nth-child(5) { animation-delay: 200ms; }
 @keyframes obIn { from { opacity: 0; transform: translateY(10px); filter: blur(3px); } }
 .ob-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.lang-select { width: auto; min-width: 150px; padding: 8px 32px 8px 12px; cursor: pointer; appearance: none;
+  background: var(--ink-2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238e95ab' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 12px center; }
 
 .scan { display: grid; gap: 6px; font-size: 13.5px; color: var(--muted); max-height: 220px; overflow: hidden; }
 .scan div { display: flex; gap: 10px; align-items: center; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; animation: obIn 260ms var(--ease-out) backwards; }
