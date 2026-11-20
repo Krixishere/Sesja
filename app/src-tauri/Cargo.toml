@@ -4,7 +4,7 @@ version = "1.0.0"
 description = "Sesja – wspólne nagrywanie w REAPERze przez internet"
 authors = ["krixishere"]
 license = "MIT"
-repository = "https://github.com/krixishere/repomulitplayer"
+repository = "https://github.com/Krixishere/Sesja"
 edition = "2021"
 
 [build-dependencies]

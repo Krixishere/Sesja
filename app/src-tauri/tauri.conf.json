@@ -51,7 +51,7 @@
     "longDescription": "Sesja instaluje mod REAPER Multiplayer i pozwala nagrywać jeden projekt REAPERa z kilku miejsc naraz: czat, komentarze przy klipach, lista nagrań i kto co dodał.",
     "publisher": "Sesja",
     "copyright": "© 2026 Autorzy projektu Sesja · MIT",
-    "homepage": "https://github.com/krixishere/repomulitplayer",
+    "homepage": "https://github.com/Krixishere/Sesja",
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper",

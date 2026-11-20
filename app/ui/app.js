@@ -9,8 +9,8 @@ const fileSrc = (p) => T.core.convertFileSrc(p);
 
 /* Linki wsparcia – podmień na własne konta przed wydaniem. */
 const LINKS = {
-  repo: "https://github.com/krixishere/repomulitplayer",
-  issues: "https://github.com/krixishere/repomulitplayer/issues",
+  repo: "https://github.com/Krixishere/Sesja",
+  issues: "https://github.com/Krixishere/Sesja/issues",
   reaperDownload: "https://www.reaper.fm/download.php",
   donate: [
     { name: "Buy Me a Coffee", note: "donate_bmc", url: "https://buymeacoffee.com/krixishere" },

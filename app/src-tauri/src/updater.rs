@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
-pub const REPO: &str = "krixishere/repomulitplayer";
+pub const REPO: &str = "Krixishere/Sesja";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Serialize, Clone)]
@@ -111,7 +111,9 @@ pub fn check() -> Result<UpdateInfo, String> {
 
 /// Pobiera instalator nowej wersji (z postępem) i go uruchamia.
 pub fn install(app: &AppHandle, url: &str, name: &str) -> Result<(), String> {
-    if !url.starts_with(&format!("https://github.com/{REPO}/releases/download/")) {
+    // GitHub podaje nazwę repozytorium w kanonicznej wielkości liter – porównujemy bez jej rozróżniania
+    let prefix = format!("https://github.com/{REPO}/releases/download/").to_lowercase();
+    if !url.to_lowercase().starts_with(&prefix) {
         return Err(crate::i18n::t("update_source"));
     }
     let safe: String = name

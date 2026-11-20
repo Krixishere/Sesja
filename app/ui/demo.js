@@ -64,7 +64,7 @@
   const api = {
     get_config: () => cfg,
     save_config: ({ cfg: c }) => Object.assign(cfg, c),
-    app_info: () => ({ version: "1.0.0", mod_version: "1.1.0", repo: "krixishere/repomulitplayer", os: "windows" }),
+    app_info: () => ({ version: "1.0.0", mod_version: "1.1.0", repo: "Krixishere/Sesja", os: "windows" }),
     changelog: () => changelog,
     detect_reaper: () => new Promise((r) => setTimeout(() => r(reaper), 300)),
     pick_reaper_folder: () => ({ ...reaper, found: true }),

@@ -3,12 +3,13 @@
 # - Każdy push (na dowolny branch): budowanie próbne na Windows, macOS i Linuksie.
 #   Gotowe instalatory są do pobrania w zakładce „Artifacts” danego uruchomienia.
 # - Push na main z NOWĄ wersją (app/src-tauri/tauri.conf.json, pole "version"),
-#   dla której nie ma jeszcze tagu: wydanie vX.Y.Z na GitHubie z instalatorami.
+#   której jeszcze nie wydano: powstaje szkic wydania vX.Y.Z, trzy systemy wgrywają
+#   do niego instalatory, a gdy wszystkie się zbudują – wydanie jest publikowane.
 #   Zainstalowane aplikacje same zaproponują tę aktualizację.
 # - Ręcznie: zakładka Actions → „Wydanie” → Run workflow.
 #
 # Jak wydać nową wersję: podnieś "version" w tauri.conf.json i Cargo.toml,
-# dopisz zmiany do CHANGELOG.md, scal do main. Reszta dzieje się sama.
+# dodaj sekcję "## Sesja X.Y.Z" do CHANGELOG.md, scal do main. Reszta dzieje się sama.
 name: Wydanie
 
 on:
@@ -30,9 +31,8 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
       release: ${{ steps.v.outputs.release }}
-      notes: ${{ steps.v.outputs.notes }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: v
         name: Wersja i decyzja o wydaniu
         env:
@@ -47,25 +47,49 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           RELEASE=false
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] || { [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; }; then
-            if gh release view "v$VERSION" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-              echo "Wydanie v$VERSION już istnieje – tylko budowanie próbne."
+            DRAFT=$(gh release view "v$VERSION" --repo "${{ github.repository }}" --json isDraft --jq .isDraft 2>/dev/null || echo missing)
+            if [ "$DRAFT" = "false" ]; then
+              echo "Wydanie v$VERSION jest już opublikowane – tylko budowanie próbne."
             else
               RELEASE=true
             fi
           fi
           echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
-          # opis wydania = sekcja tej wersji z CHANGELOG.md
-          NOTES=$(awk -v v="$VERSION" '
+
+  # Szkic wydania tworzy gh (poprawnie obsługuje polskie znaki w opisie).
+  draft:
+    needs: version
+    if: needs.version.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.d.outputs.id }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: d
+        name: Szkic wydania z opisem z CHANGELOG.md
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          TAG="v$VERSION"
+          # szkice z poprzednich, nieudanych prób – zaczynamy od nowa
+          for OLD in $(gh api "repos/${{ github.repository }}/releases" --jq ".[] | select(.tag_name == \"$TAG\" and .draft) | .id"); do
+            gh api -X DELETE "repos/${{ github.repository }}/releases/$OLD"
+          done
+          awk -v v="$VERSION" '
             /^## / { if (found) exit; if (index($0, "## Sesja " v) == 1) { found=1; next } }
-            found { print }' CHANGELOG.md)
-          {
-            echo "notes<<EOF_NOTES"
-            echo "${NOTES:-Poprawki i nowe funkcje.}"
-            echo "EOF_NOTES"
-          } >> "$GITHUB_OUTPUT"
+            found { print }' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "Poprawki i nowe funkcje." > notes.md
+          gh release create "$TAG" --repo "${{ github.repository }}" --draft \
+            --title "Sesja $VERSION" --notes-file notes.md --target "${{ github.sha }}"
+          ID=$(gh api "repos/${{ github.repository }}/releases" --jq ".[] | select(.tag_name == \"$TAG\" and .draft) | .id" | head -1)
+          [ -n "$ID" ] || { echo "::error::Nie znaleziono szkicu wydania $TAG"; exit 1; }
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
 
   build:
-    needs: version
+    needs: [version, draft]
+    # buduje także wtedy, gdy nie ma wydania (draft pominięty)
+    if: always() && needs.version.result == 'success' && needs.draft.result != 'failure'
     strategy:
       fail-fast: false
       matrix:
@@ -81,13 +105,13 @@ jobs:
             args: ""
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Zależności systemowe (Linux)
         if: matrix.name == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - uses: dtolnay/rust-toolchain@stable
@@ -98,7 +122,7 @@ jobs:
           workspaces: app/src-tauri -> target
           key: ${{ matrix.name }}
 
-      - name: Budowanie i wydanie
+      - name: Budowanie (i wgranie do szkicu wydania)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -106,12 +130,8 @@ jobs:
           projectPath: app
           tauriScript: npx --yes @tauri-apps/cli@2
           args: ${{ matrix.args }}
-          # bez tagName tauri-action tylko buduje – wydanie powstaje wyłącznie na main z nową wersją
-          tagName: ${{ needs.version.outputs.release == 'true' && format('v{0}', needs.version.outputs.version) || '' }}
-          releaseName: ${{ needs.version.outputs.release == 'true' && format('Sesja {0}', needs.version.outputs.version) || '' }}
-          releaseBody: ${{ needs.version.outputs.notes }}
-          releaseDraft: false
-          prerelease: false
+          # z releaseId tauri-action tylko wgrywa pliki do istniejącego szkicu; bez niego tylko buduje
+          releaseId: ${{ needs.draft.outputs.id }}
 
       - name: Instalatory jako artefakt (do pobrania z tego uruchomienia)
         uses: actions/upload-artifact@v4
@@ -123,3 +143,13 @@ jobs:
             app/src-tauri/target/**/release/bundle/dmg/*.dmg
             app/src-tauri/target/**/release/bundle/appimage/*.AppImage
             app/src-tauri/target/**/release/bundle/deb/*.deb
+
+  publish:
+    needs: [version, draft, build]
+    if: needs.version.outputs.release == 'true' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publikacja wydania
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "v${{ needs.version.outputs.version }}" --repo "${{ github.repository }}" --draft=false --latest
