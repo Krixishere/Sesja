@@ -414,7 +414,7 @@ async function obProfileSave() {
   }
   try {
     S.cfg = await invoke("save_config", { cfg });
-    if (OB.mode === "host") S.host = await invoke("host_start", { port: S.cfg.host_port || 8765, password: S.cfg.host_password });
+    if (OB.mode === "host") { S.host = await invoke("host_start", { port: S.cfg.host_port || 8765, password: S.cfg.host_password }); checkFirewall(); }
   } catch (e) { return fail(e); }
   OB.step = OB.detect?.found && OB.detect?.resource ? 3 : 4;
   obRender();
@@ -653,6 +653,7 @@ RENDER.studio = () => {
       </div>
     </div>
     <div id="studio-error">${errorNotice(s)}</div>
+    <div id="fw-box">${firewallNotice()}</div>
     <div class="studio-grid">
       <div class="stack">
         <section class="panel"><h2>${t("in_session")} <span class="muted" id="people-n"></span></h2><div class="people" id="people"></div></section>
@@ -666,6 +667,7 @@ RENDER.studio = () => {
 function studioEmpty() {
   return `
     ${head(t("nav_studio"), t("studio_empty_lead"), `<button class="btn ghost" data-view="guide">${icon("link")}${t("nav_guide")}</button>`)}
+    <div id="fw-box">${firewallNotice()}</div>
     ${S.host.running ? `<div style="margin-bottom:18px">${hostPanel()}</div>` : ""}
     <div class="choice-grid">
       <section class="panel choice">
@@ -760,10 +762,35 @@ function feedHtml(s) {
 /* błąd połączenia z podpowiedzią, co sprawdzić */
 function errorNotice(s) {
   if (!s.error || s.status === "on") return "";
+  // podpowiedź zależy od rodzaju błędu: brak serwera / brak odpowiedzi (zapora) / hasło
+  const help = { refused: "err_refused_help", timeout: "err_timeout_help", auth: "err_auth_help" }[s.error_kind] || "conn_help";
   return `<div class="notice notice-error">${icon("alert")}<div><b>${esc(s.error)}</b>
-    <p>${t("conn_help")}</p>
-    <div class="row"><button class="btn ghost" data-view="guide">${icon("link")}${t("nav_guide")}</button>
-    <button class="btn ghost" data-view="settings">${t("nav_settings")}</button></div></div></div>`;
+    <p>${t(help)}</p>
+    <div class="row"><button class="btn primary" data-act="reconnect">${icon("refresh")}${t("reconnect")}</button>
+    <button class="btn ghost" data-view="guide">${icon("link")}${t("nav_guide")}</button>
+    <button class="btn ghost" data-view="settings">${t("nav_settings")}</button>
+    <small class="muted retry-in" id="retry-in"></small></div></div></div>`;
+}
+/* odliczanie do kolejnej automatycznej próby połączenia */
+setInterval(() => {
+  const el = $("#retry-in"), s = S.session;
+  if (!el || !s || s.status === "on" || !s.retry_at) return;
+  const left = Math.max(0, Math.ceil(s.retry_at - Date.now() / 1000));
+  el.textContent = left > 0 ? t("retry_in", { n: left }) : t("st_connecting") + "…";
+}, 500);
+
+/* ------------------------------------------------------------------ zapora Windows */
+async function checkFirewall() {
+  if (!S.host.running) { S.fw = null; return; }
+  try { S.fw = await invoke("firewall_status", { port: S.host.port }); } catch { S.fw = null; }
+  const box = $("#fw-box");
+  if (box) box.innerHTML = firewallNotice();
+}
+function firewallNotice() {
+  if (!S.fw || !S.fw.applicable || S.fw.allowed) return "";
+  return `<div class="notice notice-error">${icon("alert")}<div><b>${t("fw_title")}</b>
+    <p>${t("fw_text")}</p>
+    <div class="row"><button class="btn primary" data-act="fw-allow">${icon("check")}${t("fw_button")}</button></div></div></div>`;
 }
 
 REFRESH.studio = () => {
@@ -1211,6 +1238,7 @@ AFTER.settings = () => {
     try {
       S.cfg = await invoke("save_config", { cfg: { ...S.cfg, host_port: +f.get("host_port") || 8765, host_password: f.get("host_password"), host_on_start: f.get("host_on_start") === "on" } });
       S.host = await invoke("host_start", { port: S.cfg.host_port, password: S.cfg.host_password });
+      checkFirewall();
       toast({ title: t("server_started"), text: th("server_started_text", { port: S.host.port }) });
       renderConn();
       renderView(false);
@@ -1238,6 +1266,21 @@ async function connect() {
 }
 
 const ACTIONS = {
+  async reconnect(btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<div class="spinner"></div>${t("st_connecting")}`;
+    try { await connect(); renderView(false); } catch (e) { fail(e); btn.disabled = false; }
+  },
+  async "fw-allow"(btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<div class="spinner"></div>${t("fw_waiting")}`;
+    try {
+      S.fw = await invoke("firewall_allow", { port: S.host.port });
+      toast({ title: t("fw_done"), text: t("fw_done_text") });
+    } catch (e) { fail(e); }
+    const box = $("#fw-box");
+    if (box) box.innerHTML = firewallNotice();
+  },
   async disconnect() { await invoke("session_disconnect"); S.session = null; renderConn(); renderView(false); },
   async launch() { try { await invoke("launch_reaper"); toast({ title: t("opening_reaper") }); } catch (e) { fail(e); } },
   async "host-stop"() {
@@ -1253,6 +1296,7 @@ const ACTIONS = {
       S.cfg = await invoke("save_config", { cfg: { ...S.cfg, server: `http://127.0.0.1:${S.host.port}`, password: S.cfg.host_password } });
       await connect();
       renderView(true);
+      checkFirewall();
     } catch (e) { fail(e); }
   },
   async join() {
@@ -1478,6 +1522,7 @@ async function boot() {
     if (S.cfg.nick && S.cfg.server && S.cfg.room) connect().catch(() => {});
   }
   if (S.cfg.auto_update) setTimeout(() => checkUpdates(false), 2500);
+  checkFirewall();
 }
 
 boot().catch((e) => {

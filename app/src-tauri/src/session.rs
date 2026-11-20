@@ -69,6 +69,10 @@ pub struct Entry {
 pub struct Summary {
     pub status: String, // off | connecting | on | error
     pub error: Option<String>,
+    /// refused | timeout | auth | server | other
+    pub error_kind: Option<String>,
+    /// kiedy (unix, s) nastąpi kolejna próba połączenia
+    pub retry_at: f64,
     pub room: String,
     pub server: String,
     pub me: String,
@@ -88,6 +92,8 @@ struct Model {
     cid: String,
     status: String,
     error: Option<String>,
+    error_kind: Option<String>,
+    retry_at: f64,
     loaded: bool,
     last_seq: u64,
     tracks: HashMap<String, Track>,
@@ -370,6 +376,8 @@ impl Model {
             colors,
             status: self.status.clone(),
             error: self.error.clone(),
+            error_kind: self.error_kind.clone(),
+            retry_at: self.retry_at,
             room: self.conn.room.clone(),
             server: self.conn.server.clone(),
             me: self.conn.user.clone(),
@@ -437,29 +445,46 @@ fn url(conn: &Conn, path: &str) -> String {
 }
 
 /// Wynik zapytania: JSON albo czytelny komunikat błędu.
-fn call(req: ureq::Request, body: Option<&Value>, conn: &Conn) -> Result<Value, String> {
+/// Błąd połączenia: komunikat + rodzaj, żeby interfejs mógł podpowiedzieć, co sprawdzić.
+/// Rodzaje: refused (pod adresem nie działa serwer), timeout (komputer nie odpowiada –
+/// zwykle zapora albo Tailscale), auth (złe hasło / pokój), server, other.
+type CallErr = (String, &'static str);
+
+fn call(req: ureq::Request, body: Option<&Value>, conn: &Conn) -> Result<Value, CallErr> {
     let req = if conn.password.is_empty() { req } else { req.set("X-RMP-Key", &conn.password) };
     let res = match body {
         Some(b) => req.send_json(b.clone()),
         None => req.call(),
     };
     match res {
-        Ok(r) => r.into_json::<Value>().map_err(|e| tf("bad_response", &[&e])),
+        Ok(r) => r.into_json::<Value>().map_err(|e| (tf("bad_response", &[&e]), "server")),
         Err(ureq::Error::Status(_, r)) => {
             let v: Value = r.into_json().unwrap_or(json!({}));
-            Err(i18n::server_error(&v))
+            Err((i18n::server_error(&v), server_kind(&v)))
         }
-        Err(e) => Err(tf("cant_connect", &[&conn.server, &short_err(&e.to_string())])),
+        Err(e) => {
+            let (msg, kind) = short_err(&e.to_string());
+            Err((tf("cant_connect", &[&conn.server, &msg]), kind))
+        }
     }
 }
 
-fn short_err(s: &str) -> String {
-    if s.contains("Connection refused") || s.contains("refused") {
-        t("refused")
-    } else if s.contains("timed out") || s.contains("Timeout") {
-        t("timeout")
+fn server_kind(v: &Value) -> &'static str {
+    match v["code"].as_str() {
+        Some("bad_password") | Some("bad_room") => "auth",
+        _ => "server",
+    }
+}
+
+fn short_err(s: &str) -> (String, &'static str) {
+    let l = s.to_lowercase();
+    // Windows: 10061 = odmowa połączenia, 10060 = brak odpowiedzi (np. zapora)
+    if l.contains("refused") || l.contains("10061") {
+        (t("refused"), "refused")
+    } else if l.contains("timed out") || l.contains("timeout") || l.contains("10060") || l.contains("did not properly respond") {
+        (t("timeout"), "timeout")
     } else {
-        s.chars().take(120).collect()
+        (s.chars().take(120).collect(), "other")
     }
 }
 
@@ -471,6 +496,8 @@ impl Session {
             cid,
             status: "connecting".into(),
             error: None,
+            error_kind: None,
+            retry_at: 0.0,
             loaded: false,
             last_seq: 0,
             tracks: HashMap::new(),
@@ -529,15 +556,21 @@ fn run(app: AppHandle, model: Arc<Mutex<Model>>, stop: Arc<AtomicBool>, conn: Co
                     m.load_state(&st);
                     m.status = "on".into();
                     m.error = None;
+                    m.error_kind = None;
                 }
                 Ok(st) => {
                     m.status = "error".into();
                     m.error = Some(i18n::server_error(&st));
+                    m.error_kind = Some(server_kind(&st).into());
                 }
-                Err(e) => {
+                Err((e, kind)) => {
                     m.status = "error".into();
                     m.error = Some(e);
+                    m.error_kind = Some(kind.into());
                 }
+            }
+            if !m.loaded {
+                m.retry_at = now() + 3.0;
             }
             emit(&m);
             let failed = !m.loaded;
@@ -564,6 +597,7 @@ fn run(app: AppHandle, model: Arc<Mutex<Model>>, stop: Arc<AtomicBool>, conn: Co
                 Ok(r) if r["ok"].as_bool() == Some(true) => {
                     m.status = "on".into();
                     m.error = None;
+                    m.error_kind = None;
                     m.users = r["users"].as_array().cloned().unwrap_or_default();
                     if let Some(c) = r["color"].as_str() {
                         m.my_color = c.into();
@@ -586,11 +620,15 @@ fn run(app: AppHandle, model: Arc<Mutex<Model>>, stop: Arc<AtomicBool>, conn: Co
                 Ok(r) => {
                     m.status = "error".into();
                     m.error = Some(i18n::server_error(&r));
+                    m.error_kind = Some(server_kind(&r).into());
+                    m.retry_at = now() + 1.5;
                     m.outbox.splice(0..0, sent);
                 }
-                Err(e) => {
+                Err((e, kind)) => {
                     m.status = "error".into();
                     m.error = Some(e);
+                    m.error_kind = Some(kind.into());
+                    m.retry_at = now() + 1.5;
                     m.outbox.splice(0..0, sent);
                 }
             }
@@ -631,7 +669,7 @@ pub fn fetch_file(conn: &Conn, id: &str, cache: PathBuf) -> Result<PathBuf, Stri
     let req = if conn.password.is_empty() { req } else { req.set("X-RMP-Key", &conn.password) };
     let resp = req.call().map_err(|e| match e {
         ureq::Error::Status(404, _) => t("file_pending"),
-        e => short_err(&e.to_string()),
+        e => short_err(&e.to_string()).0,
     })?;
     let tmp = dest.with_extension("part");
     let mut f = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;

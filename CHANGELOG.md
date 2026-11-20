@@ -3,6 +3,16 @@
 Nagłówki wersji aplikacji mają postać `## Sesja X.Y.Z` – sekcja trafia automatycznie
 do opisu wydania na GitHubie.
 
+## Sesja 1.2.0
+
+- Zapora Windows: gospodarz widzi w Studiu ostrzeżenie, gdy zapora może blokować znajomych,
+  i jednym przyciskiem „Odblokuj w zaporze Windows” dodaje zezwolenie (usuwa też blokadę
+  powstałą po zamknięciu okienka zapory przy pierwszym uruchomieniu).
+- Dokładniejsze błędy u dołączających: aplikacja rozróżnia „nie działa tam serwer”,
+  „komputer gospodarza nie odpowiada” (zapora / Tailscale) i „złe hasło lub pokój”,
+  i podpowiada, co zrobić.
+- Przycisk „Połącz ponownie” i odliczanie do kolejnej automatycznej próby.
+
 ## Sesja 1.1.1
 
 - W Studiu nad nazwą pokoju jest podpis „Pokój” – nie myli się już z nazwą zakładki.

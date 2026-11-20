@@ -297,7 +297,7 @@ p { margin: 0; }
 .warn { color: var(--amber); }
 .bad { color: var(--rec); }
 .notice { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: var(--r-m); background: rgba(243, 167, 59, 0.08); color: var(--paper); font-size: 14px; }
-.notice svg { width: 20px; height: 20px; color: var(--amber); flex: none; margin-top: 1px; }
+.notice > svg { width: 20px; height: 20px; color: var(--amber); flex: none; margin-top: 1px; }
 
 .md h2 { font-size: 22px; margin: 26px 0 10px; }
 .md h3 { font-size: 17px; margin: 18px 0 8px; }
@@ -485,3 +485,4 @@ p { margin: 0; }
 .notice-error > svg { color: var(--rec); }
 .notice-error b { display: block; font-weight: 600; }
 .notice-error p { color: var(--paper-2); margin: 4px 0 10px; }
+.retry-in { align-self: center; margin-left: 4px; font-variant-numeric: tabular-nums; }

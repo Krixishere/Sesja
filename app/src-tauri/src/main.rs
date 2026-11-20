@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
+mod firewall;
 mod i18n;
 mod reaper;
 mod server;
@@ -264,6 +265,18 @@ fn host_status(st: State<AppState>) -> Value {
     }
 }
 
+#[tauri::command]
+fn firewall_status(port: u16) -> Value {
+    firewall::status(port)
+}
+
+#[tauri::command]
+async fn firewall_allow(port: u16) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || firewall::allow(port))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 // ---------------------------------------------------------------- aktualizacje, linki
 
 #[tauri::command]
@@ -389,6 +402,8 @@ fn main() {
             host_start,
             host_stop,
             host_status,
+            firewall_status,
+            firewall_allow,
             check_update,
             install_update,
             open_url,
