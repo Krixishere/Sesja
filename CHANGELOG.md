@@ -3,6 +3,16 @@
 Nagłówki wersji aplikacji mają postać `## Sesja X.Y.Z` – sekcja trafia automatycznie
 do opisu wydania na GitHubie.
 
+## Sesja 1.0.1
+
+- Naprawiony błąd „invalid args `resource` for command `install_mod`”, gdy REAPER był
+  zainstalowany, ale jeszcze nigdy nie uruchomiony (nie miał folderu ustawień).
+  Instalator prosi teraz o jednorazowe otwarcie REAPERa i sam przechodzi dalej,
+  gdy folder ustawień się pojawi.
+- Przycisk „Zainstaluj” czeka, aż REAPER zostanie zamknięty – inaczej REAPER przy
+  zamykaniu nadpisałby zapisane właśnie ustawienia (nick, adres sesji).
+- Linux: REAPER uruchomiony z aplikacji nie zostaje już jako „zombie” udający działający program.
+
 ## Sesja 1.0.0
 
 - Aplikacja na Windows, macOS i Linuksa z instalatorem: na Windows to „Sesja Setup” (.exe)

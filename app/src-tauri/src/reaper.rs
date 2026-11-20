@@ -27,6 +27,8 @@ pub struct ReaperInfo {
     pub autostart: bool,
     pub running: bool,
     pub checked: Vec<String>,
+    /// Program znaleziony, ale REAPER nie był jeszcze uruchomiony, więc nie ma folderu ustawień.
+    pub needs_first_run: bool,
 }
 
 pub fn bundled_version() -> String {
@@ -115,6 +117,7 @@ fn resource_for_exe(exe: &Path) -> (Option<PathBuf>, bool) {
 fn fill_status(info: &mut ReaperInfo) {
     info.bundled_version = bundled_version();
     info.running = is_running();
+    info.needs_first_run = info.found && info.resource.is_none();
     if let Some(res) = &info.resource {
         let script = Path::new(res).join("Scripts").join(SCRIPT_DIR).join(SCRIPT_FILE);
         if let Ok(src) = std::fs::read_to_string(&script) {

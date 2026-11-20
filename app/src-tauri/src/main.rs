@@ -101,7 +101,9 @@ fn remember_reaper(st: State<AppState>, exe: Option<String>, resource: Option<St
 }
 
 #[tauri::command]
-fn install_mod(st: State<AppState>, resource: String, autostart: bool) -> Result<reaper::InstallReport, String> {
+fn install_mod(st: State<AppState>, resource: Option<String>, autostart: bool) -> Result<reaper::InstallReport, String> {
+    // brak folderu ustawień = REAPER nie był jeszcze uruchomiony na tym komputerze
+    let resource = resource.filter(|r| !r.trim().is_empty()).ok_or_else(|| i18n::t("run_reaper_first"))?;
     let cfg = st.config.lock().unwrap().clone();
     let conn = (!cfg.nick.is_empty()).then(|| reaper::Conn {
         server: &cfg.server,
@@ -138,7 +140,12 @@ fn launch_reaper(st: State<AppState>) -> Result<(), String> {
     } else {
         std::process::Command::new(&exe).spawn()
     };
-    r.map(|_| ()).map_err(|e| i18n::tf("cant_launch", &[&"REAPER", &e]))
+    let mut child = r.map_err(|e| i18n::tf("cant_launch", &[&"REAPER", &e]))?;
+    // odbieramy zakończony proces, żeby nie wisiał jako „zombie” i nie udawał działającego REAPERa
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 // ---------------------------------------------------------------- sesja

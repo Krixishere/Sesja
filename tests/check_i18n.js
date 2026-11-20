@@ -9,7 +9,7 @@ for (const m of app.matchAll(/"((?:nav|donate|st|act|net|ob|startup|reaper|mod|a
 ["track_add", "track_edit", "track_del", "item_add", "item_edit", "item_del", "order", "tempo", "comment_del", "unknown"].forEach((a) => used.add("act_" + a));
 ["tailscale", "lan", "other", "local"].forEach((k) => used.add("net_" + k));
 // przedrostki składane w kodzie ("act_" + akcja) i nazwy komend Rusta to nie klucze
-for (const k of [...used]) if (k.endsWith("_") || k === "save_config") used.delete(k);
+for (const k of [...used]) if (k.endsWith("_") || ["save_config", "reaper_running"].includes(k)) used.delete(k);
 const params = (s) => [...String(typeof s === "string" ? s : JSON.stringify(s)).matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(",");
 let errors = 0;
 const ref = DICT.en;

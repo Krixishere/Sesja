@@ -326,7 +326,26 @@ async function obSearch(body, foot) {
   if (OB_STEPS[OB.step] === "search") obSearchResult(body, foot, info);
 }
 
+let firstRunTimer = 0;
 function obSearchResult(body, foot, info) {
+  clearInterval(firstRunTimer);
+  if (info.found && !info.resource) {
+    // program jest, ale REAPER nie był jeszcze uruchomiony – nie ma folderu ustawień
+    body.innerHTML = `<h2>${t("ob_firstrun_title")}</h2>
+      <div class="found"><div class="ic">${icon("alert")}</div><div>
+        <b>${t("ob_firstrun_head")}</b>
+        <small>${esc(info.exe || "")}</small>
+      </div></div>
+      <p>${t("ob_firstrun_text")}</p>
+      <div class="row">
+        ${info.exe ? `<button class="btn primary" data-ob="launch-wait">${icon("reaper")}${t("open_reaper")}</button>` : ""}
+        <button class="btn ghost" data-ob="pick">${icon("folder")}${t("pick_reaper")}</button>
+      </div>`;
+    foot.innerHTML = `<button class="btn ghost" data-ob="back">${t("back")}</button>
+      <div class="row"><button class="btn ghost" data-ob="retry">${icon("refresh")}${t("search_again")}</button>
+      <button class="btn ghost" data-ob="skip">${t("skip_for_now")}</button></div>`;
+    return;
+  }
   if (info.found) {
     OB.anim.kick();
     body.innerHTML = `<h2>${t("ob_found_title")}</h2>
@@ -397,7 +416,7 @@ async function obProfileSave() {
     S.cfg = await invoke("save_config", { cfg });
     if (OB.mode === "host") S.host = await invoke("host_start", { port: S.cfg.host_port || 8765, password: S.cfg.host_password });
   } catch (e) { return fail(e); }
-  OB.step = OB.detect?.found ? 3 : 4;
+  OB.step = OB.detect?.found && OB.detect?.resource ? 3 : 4;
   obRender();
 }
 
@@ -411,11 +430,39 @@ function obInstall(body, foot) {
       <div>${icon("check")}<span>${t("ob_inst_settings")}</span></div>
     </div>
     <label class="switch"><input type="checkbox" id="ob-auto" ${S.cfg.autostart_script ? "checked" : ""}><i></i><span>${t("autostart")}</span></label>
-    ${info.running ? `<div class="notice">${icon("alert")}<span>${t("ob_close_reaper")}</span></div>` : ""}`;
-  foot.innerHTML = `<button class="btn ghost" data-ob="back">${t("back")}</button><button class="btn primary big" data-ob="install">${t("install")}</button>`;
+`;
+  foot.innerHTML = `<button class="btn ghost" data-ob="back">${t("back")}</button><button class="btn primary big" data-ob="install" id="ob-install">${t("install")}</button>`;
+  watchReaperClosed();
+}
+
+/* REAPER zapisuje swoje ustawienia przy zamykaniu – instalacja przy otwartym REAPERze
+   zostałaby nadpisana. Przycisk czeka, aż REAPER zostanie zamknięty. */
+let reaperWatch = 0;
+async function watchReaperClosed() {
+  clearInterval(reaperWatch);
+  const update = async () => {
+    const btn = $("#ob-install");
+    if (!btn || OB_STEPS[OB.step] !== "install") return clearInterval(reaperWatch);
+    if (btn.dataset.busy) return;
+    const running = await invoke("reaper_running").catch(() => false);
+    const notice = $("#ob-running");
+    if (running) {
+      btn.disabled = true;
+      btn.textContent = t("close_reaper_first");
+      if (!notice) $("#ob-check").insertAdjacentHTML("afterend", `<div class="notice" id="ob-running">${icon("alert")}<span>${t("ob_close_reaper")}</span></div>`);
+    } else {
+      btn.disabled = false;
+      btn.textContent = t("install");
+      notice?.remove();
+    }
+  };
+  await update();
+  reaperWatch = setInterval(update, 2000);
 }
 
 async function obDoInstall(btn) {
+  clearInterval(reaperWatch);
+  btn.dataset.busy = "1";
   btn.disabled = true;
   btn.innerHTML = `<div class="spinner"></div>${t("installing")}`;
   try {
@@ -432,6 +479,7 @@ async function obDoInstall(btn) {
     obRender();
   } catch (e) {
     btn.disabled = false;
+    delete btn.dataset.busy;
     btn.textContent = t("try_again");
     fail(e);
   }
@@ -440,7 +488,7 @@ async function obDoInstall(btn) {
 async function obAction(act, el) {
   switch (act) {
     case "next": OB.step = Math.min(OB.step + 1, OB_STEPS.length - 1); return obRender();
-    case "back": OB.step = Math.max(OB.step - 1, 0); return obRender();
+    case "back": clearInterval(firstRunTimer); OB.step = Math.max(OB.step - 1, 0); return obRender();
     case "retry": OB.step = 1; return obRender();
     case "skip": OB.detect = { found: false }; OB.step = 2; return obRender();
     case "pick": {
@@ -458,6 +506,24 @@ async function obAction(act, el) {
     case "profile-save": return obProfileSave();
     case "install": return obDoInstall(el);
     case "launch": invoke("launch_reaper").catch(fail); return;
+    case "launch-wait": {
+      // otwórz REAPERa i czekaj, aż utworzy folder ustawień – wtedy przejdź dalej sam
+      try { await invoke("launch_reaper"); } catch (e) { return fail(e); }
+      el.disabled = true;
+      el.innerHTML = `<div class="spinner"></div>${t("waiting_for_reaper")}`;
+      clearInterval(firstRunTimer);
+      firstRunTimer = setInterval(async () => {
+        if (OB_STEPS[OB.step] !== "search") return clearInterval(firstRunTimer);
+        const info = await invoke("detect_reaper").catch(() => null);
+        if (info?.resource) {
+          clearInterval(firstRunTimer);
+          OB.detect = info;
+          S.reaper = info;
+          obSearchResult($("#ob-body"), $("#ob-foot"), info);
+        }
+      }, 3000);
+      return;
+    }
     case "finish": {
       S.cfg = await invoke("save_config", { cfg: { ...S.cfg, onboarded: true } });
       OB.anim.stop();
@@ -897,14 +963,15 @@ RENDER.reaper = () => {
           <dt>${t("reaper_now")}</dt><dd>${t(r.running ? "reaper_open" : "reaper_closed")}</dd>
         </dl>` : `<div class="found miss"><div class="ic">${icon("x")}</div><div><b>${t("ob_missing_title")}</b><small>${t("pick_reaper_text")}</small></div></div>`}
         ${r.running ? `<div class="notice" style="margin-top:16px">${icon("alert")}<span>${t("restart_reaper")}</span></div>` : ""}
+        ${r.found && !r.resource ? `<div class="notice" style="margin-top:16px">${icon("alert")}<span>${t("ob_firstrun_text")}</span></div>` : ""}
         <div class="row" style="margin-top:18px">
-          ${r.found ? `<button class="btn primary" data-act="install">${icon("download")}${t(r.script_installed ? (upToDate ? "reinstall" : "update_mod") : "install_mod")}</button>` : ""}
+          ${r.found && r.resource ? `<button class="btn primary" data-act="install">${icon("download")}${t(r.script_installed ? (upToDate ? "reinstall" : "update_mod") : "install_mod")}</button>` : ""}
           <button class="btn ghost" data-act="pick">${icon("folder")}${t("pick_reaper")}</button>
           ${r.resource ? `<button class="btn ghost" data-act="open-res">${t("open_settings_folder")}</button>` : ""}
           ${r.exe ? `<button class="btn ghost" data-act="launch">${icon("reaper")}${t("open_reaper")}</button>` : ""}
         </div>
       </section>
-      ${r.found ? `<section class="panel"><h2>${t("options")}</h2>
+      ${r.found && r.resource ? `<section class="panel"><h2>${t("options")}</h2>
         <label class="switch"><input type="checkbox" id="auto-toggle" ${r.autostart ? "checked" : ""}><i></i><span>${t("autostart")}</span></label>
         ${r.script_installed ? `<div class="row" style="margin-top:18px"><button class="btn danger" data-act="uninstall">${t("uninstall_mod")}</button></div>` : ""}
       </section>` : ""}
