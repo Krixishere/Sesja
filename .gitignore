@@ -1,0 +1,5 @@
+rmp_data/
+__pycache__/
+*.pyc
+app/src-tauri/target/
+app/src-tauri/gen/

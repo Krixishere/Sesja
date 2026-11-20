@@ -1,0 +1,32 @@
+[package]
+name = "sesja"
+version = "1.0.0"
+description = "Sesja – wspólne nagrywanie w REAPERze przez internet"
+authors = ["krixishere"]
+license = "MIT"
+repository = "https://github.com/krixishere/repomulitplayer"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+ureq = { version = "2", features = ["json"] }
+tiny_http = "0.12"
+dirs = "5"
+md-5 = "0.10"
+if-addrs = "0.13"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1C2642"/>
+      <stop offset="1" stop-color="#0B1020"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.78" r="0.62">
+      <stop offset="0" stop-color="#F3A73B" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#F3A73B" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="220" fill="url(#bg)"/>
+  <rect x="32" y="32" width="960" height="960" rx="220" fill="url(#glow)"/>
+  <rect x="33.5" y="33.5" width="957" height="957" rx="218.5" fill="none" stroke="#ffffff" stroke-opacity="0.08" stroke-width="3"/>
+  <!-- skala VU -->
+  <g fill="none" stroke-linecap="round">
+    <path d="M232 560 A300 300 0 0 1 792 560" stroke="#EAE3D2" stroke-opacity="0.18" stroke-width="22"/>
+    <path d="M664 352 A300 300 0 0 1 792 560" stroke="#F0524F" stroke-width="22"/>
+    <g stroke="#EAE3D2" stroke-opacity="0.5" stroke-width="14">
+      <line x1="193" y1="444" x2="162" y2="433"/>
+      <line x1="272" y1="320" x2="249" y2="297"/>
+      <line x1="396" y1="241" x2="385" y2="210"/>
+      <line x1="512" y1="220" x2="512" y2="188"/>
+      <line x1="628" y1="241" x2="639" y2="210"/>
+    </g>
+  </g>
+  <!-- dwa sygnały -->
+  <path d="M150 770 C 230 690, 270 850, 350 770 S 450 700, 512 744" fill="none" stroke="#5FC9B5" stroke-width="30" stroke-linecap="round"/>
+  <path d="M874 770 C 794 850, 754 690, 674 770 S 574 840, 512 744" fill="none" stroke="#EAE3D2" stroke-width="30" stroke-linecap="round"/>
+  <!-- wskazówka -->
+  <line x1="512" y1="744" x2="676" y2="380" stroke="#F3A73B" stroke-width="30" stroke-linecap="round"/>
+  <circle cx="512" cy="744" r="52" fill="#F3A73B"/>
+  <circle cx="512" cy="744" r="20" fill="#0E1424"/>
+</svg>
