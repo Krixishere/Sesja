@@ -30,9 +30,14 @@ def main():
     port = free_port()
     server = f"http://127.0.0.1:{port}"
     env = dict(os.environ, NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost")
-    srv = subprocess.Popen(
-        [sys.executable, os.path.join(ROOT, "server", "rmp_server.py"), "--port", str(port),
-         "--host", "127.0.0.1", "--data", os.path.join(tmp, "data")], env=env)
+    # RMP_SERVER=rust -> wbudowany serwer aplikacji Sesja (app/src-tauri/target/debug/sesja --serve)
+    if os.environ.get("RMP_SERVER") == "rust":
+        exe = os.path.join(ROOT, "app", "src-tauri", "target", "debug", "sesja")
+        cmd = [exe, "--serve", str(port), "--data", os.path.join(tmp, "data")]
+    else:
+        cmd = [sys.executable, os.path.join(ROOT, "server", "rmp_server.py"), "--port", str(port),
+               "--host", "127.0.0.1", "--data", os.path.join(tmp, "data")]
+    srv = subprocess.Popen(cmd, env=env)
     try:
         for _ in range(50):
             try:

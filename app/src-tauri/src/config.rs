@@ -1,0 +1,76 @@
+//! Ustawienia aplikacji zapisywane w katalogu konfiguracji użytkownika.
+
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct Config {
+    /// Czy użytkownik przeszedł już przez instalator powitalny.
+    pub onboarded: bool,
+    pub nick: String,
+    /// Adres serwera, np. http://100.101.102.103:8765
+    pub server: String,
+    pub room: String,
+    pub password: String,
+    pub reaper_exe: Option<String>,
+    pub reaper_resource: Option<String>,
+    pub auto_update: bool,
+    pub autostart_script: bool,
+    /// Ustawienia serwera hostowanego w aplikacji.
+    pub host_port: u16,
+    pub host_password: String,
+    pub host_on_start: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            onboarded: false,
+            nick: String::new(),
+            server: "http://127.0.0.1:8765".into(),
+            room: "studio".into(),
+            password: String::new(),
+            reaper_exe: None,
+            reaper_resource: None,
+            auto_update: true,
+            autostart_script: true,
+            host_port: 8765,
+            host_password: String::new(),
+            host_on_start: false,
+        }
+    }
+}
+
+pub fn base_dir() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Sesja")
+}
+
+fn path() -> PathBuf {
+    base_dir().join("config.json")
+}
+
+pub fn load() -> Config {
+    std::fs::read_to_string(path())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+pub fn save(cfg: &Config) -> Result<(), String> {
+    let p = path();
+    if let Some(dir) = p.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let s = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
+    std::fs::write(&p, s).map_err(|e| format!("Nie udało się zapisać ustawień: {e}"))
+}
+
+/// Tylko znaki bezpieczne w nazwie pokoju / haśle (tak samo jak w skrypcie Lua).
+pub fn safe(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        .collect()
+}

@@ -1,5 +1,5 @@
 -- @description REAPER Multiplayer – wspólna praca nad jednym projektem przez serwer
--- @version 1.0.0
+-- @version 1.1.0
 -- @author RMP
 -- @about
 --   Łączy REAPERa z serwerem RMP (server/rmp_server.py). Wszystkie zmiany ścieżek,
@@ -10,7 +10,7 @@
 --
 --   Wymagania: REAPER 6.0+, program curl (wbudowany w Windows 10/11 i macOS).
 
-local VERSION = "1.0.0"
+local VERSION = "1.1.0"
 local M = {}
 
 -------------------------------------------------------------------------------
@@ -767,7 +767,7 @@ local function rebuild_markers()
   end
   for _, c in pairs(S.comments) do
     local col = c.color and native_color(c.color) or 0
-    r.AddProjectMarker2(0, false, c.pos or 0, 0, MARK .. c.user .. ": " .. c.text, -1, col)
+    if not c.item then r.AddProjectMarker2(0, false, c.pos or 0, 0, MARK .. c.user .. ": " .. c.text, -1, col) end
   end
   r.UpdateTimeline()
 end
@@ -1136,9 +1136,10 @@ local function note_op(op)
   elseif t == "comment" and op.id then
     S.comments[op.id] = {
       id = op.id, pos = tonumber(op.pos) or 0, text = op.text or "", user = user,
-      color = user_color_hex(user),
+      color = user_color_hex(user), item = op.item, itemName = op.itemName,
     }
-    feed_add({ kind = "comment", user = user, text = op.text or "", pos = tonumber(op.pos) or 0, id = op.id })
+    feed_add({ kind = "comment", user = user, text = op.text or "", pos = tonumber(op.pos) or 0, id = op.id,
+      item = op.item, itemName = op.itemName })
     rebuild_markers()
   elseif t == "comment_del" and op.id then
     S.comments[op.id] = nil
@@ -1330,7 +1331,10 @@ local function load_meta_from_state(st)
   end
   S.comments = {}
   for _, c in ipairs(st.comments or {}) do
-    S.comments[c.id] = { id = c.id, pos = tonumber(c.pos) or 0, text = c.text or "", user = c.user or "?" }
+    S.comments[c.id] = {
+      id = c.id, pos = tonumber(c.pos) or 0, text = c.text or "", user = c.user or "?",
+      item = c.item, itemName = c.itemName,
+    }
   end
 end
 
@@ -1577,7 +1581,10 @@ local function entry_visible(e)
 end
 
 local function entry_text(e)
-  if e.kind == "comment" then return "[komentarz @ " .. M.fmt_pos(e.pos) .. "] " .. e.text end
+  if e.kind == "comment" then
+    if e.itemName then return "[komentarz do „" .. e.itemName .. "” @ " .. M.fmt_pos(e.pos) .. "] " .. e.text end
+    return "[komentarz @ " .. M.fmt_pos(e.pos) .. "] " .. e.text
+  end
   if e.kind == "act" and (e.n or 1) > 1 then return e.text .. " (×" .. e.n .. ")" end
   return e.text
 end
@@ -1666,6 +1673,7 @@ local function draw_feed(x, y, w, h)
           if choice == 1 then
             r.SetEditCurPos(hit.e.pos, true, false)
           elseif choice == 2 and S.state == "on" then
+            remove_item_comment_marker(S.comments[hit.e.id])
             S.outbox[#S.outbox + 1] = { t = "comment_del", id = hit.e.id }
             S.nextSync = 0
           end
@@ -1705,13 +1713,54 @@ local function inspector_text()
   return "Zaznacz klip lub ścieżkę, żeby zobaczyć, kto je dodał."
 end
 
+-- Komentarz do zaznaczonego klipu: znacznik na samym klipie (take marker),
+-- który synchronizuje się razem z klipem, + wpis na liście komentarzy.
+local TAKE_MARK_PREFIX = "\u{1F4AC} "
+local function add_item_comment(item, txt, id)
+  local take = r.GetActiveTake(item)
+  local ipos = r.GetMediaItemInfo_Value(item, "D_POSITION")
+  local ilen = r.GetMediaItemInfo_Value(item, "D_LENGTH")
+  local cur = r.GetCursorPosition()
+  if cur < ipos or cur > ipos + ilen then cur = ipos end
+  if take and r.SetTakeMarker then
+    local rate = r.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+    local offs = r.GetMediaItemTakeInfo_Value(take, "D_STARTOFFS")
+    local col = S.myColor and native_color(S.myColor) or 0
+    r.SetTakeMarker(take, -1, TAKE_MARK_PREFIX .. CFG.user .. ": " .. txt, (cur - ipos) * rate + offs, col)
+    r.UpdateArrange()
+  end
+  local name = take and r.GetTakeName(take) or "klip"
+  return { t = "comment", id = id, pos = cur, text = txt, item = item_guid(item), itemName = name }
+end
+
+local function remove_item_comment_marker(c)
+  if not c or not c.item then return end
+  for i = 0, r.CountMediaItems(0) - 1 do
+    local it = r.GetMediaItem(0, i)
+    if item_guid(it) == c.item then
+      local take = r.GetActiveTake(it)
+      if take and r.GetNumTakeMarkers then
+        for k = r.GetNumTakeMarkers(take) - 1, 0, -1 do
+          local _, name = r.GetTakeMarker(take, k)
+          if name == TAKE_MARK_PREFIX .. c.user .. ": " .. c.text then r.DeleteTakeMarker(take, k) end
+        end
+        r.UpdateArrange()
+      end
+    end
+  end
+end
+
 local function send_input(asComment)
   local txt = UI.input:gsub("^%s+", ""):gsub("%s+$", "")
   if txt == "" or S.state ~= "on" then return end
   if asComment then
-    S.outbox[#S.outbox + 1] = {
-      t = "comment", id = S.cid .. "-" .. math.floor(now() * 1000), pos = r.GetCursorPosition(), text = txt,
-    }
+    local id = S.cid .. "-" .. math.floor(now() * 1000)
+    local item = r.GetSelectedMediaItem(0, 0)
+    if item then
+      S.outbox[#S.outbox + 1] = add_item_comment(item, txt, id)
+    else
+      S.outbox[#S.outbox + 1] = { t = "comment", id = id, pos = r.GetCursorPosition(), text = txt }
+    end
   else
     S.outbox[#S.outbox + 1] = { t = "chat", text = txt }
   end
@@ -1858,6 +1907,7 @@ local function draw()
       txt = txt .. "  @ " .. M.fmt_pos(u.pos)
     end
     if u.sel and u.sel ~= "" then txt = txt .. " · " .. u.sel end
+    if u.app then txt = u.name .. "  (aplikacja Sesja)" end
     local tw = gfx.measurestr(txt) + 24
     if cx + tw > W - pad then
       cx = pad
@@ -1934,7 +1984,16 @@ local function draw()
 
   local by = iy + 32
   if button(pad, by, 90, 22, "Wyślij") then send_input(false) end
-  local cl = "Komentarz @ " .. M.fmt_pos(r.GetCursorPosition())
+  local selItem = r.GetSelectedMediaItem(0, 0)
+  local cl
+  if selItem then
+    local tk = r.GetActiveTake(selItem)
+    local nm = tk and r.GetTakeName(tk) or "klip"
+    if #nm > 24 then nm = nm:sub(1, (utf8.offset(nm, 22) or 23) - 1) .. "…" end
+    cl = "Komentarz do „" .. nm .. "”"
+  else
+    cl = "Komentarz @ " .. M.fmt_pos(r.GetCursorPosition())
+  end
   gfx.setfont(2)
   local cw = gfx.measurestr(cl) + 24
   if button(pad + 96, by, cw, 22, cl) then send_input(true) end

@@ -25,7 +25,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 SAFE_RE = re.compile(r"^[A-Za-z0-9._~\-]{1,200}$")
 MAX_OPS_PER_RESPONSE = 400
@@ -153,7 +153,8 @@ class Room:
             if cid:
                 self.comments[cid] = {
                     "id": cid, "pos": op.get("pos", 0), "text": op.get("text", ""),
-                    "user": user, "ts": ts,
+                    "user": user, "ts": ts, "item": op.get("item"),
+                    "itemName": op.get("itemName"),
                 }
         elif t == "comment_del":
             self.comments.pop(op.get("id"), None)
@@ -215,6 +216,7 @@ class Room:
                 u["play"] = bool(presence.get("play"))
                 u["rec"] = bool(presence.get("rec"))
                 u["sel"] = presence.get("sel", "")
+                u["app"] = bool(presence.get("app"))
             self.users[cid] = u
 
     def online_users(self):
@@ -225,7 +227,7 @@ class Room:
             return [
                 {"cid": k, "name": u["name"], "color": u["color"], "pos": u.get("pos", 0),
                  "play": u.get("play", False), "rec": u.get("rec", False),
-                 "sel": u.get("sel", "")}
+                 "sel": u.get("sel", ""), "app": u.get("app", False)}
                 for k, u in self.users.items()
             ]
 

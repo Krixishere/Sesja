@@ -323,14 +323,24 @@ end
 -------------------------------------------------------------------------------
 local S = "ReaperMultiplayer"
 P.ext[S .. "server"] = SERVER
-P.ext[S .. "room"] = "test"
+P.ext[S .. "room"] = os.getenv("RMP_ROOM") or "test"
 P.ext[S .. "user"] = ROLE == "A" and "Ania" or "Bartek"
 P.ext[S .. "interval"] = "0.3"
 os.execute('mkdir -p "' .. DIR .. '/project"')
 
+-- prawdziwy plik WAV (mono, 16 bit, 44.1 kHz) z sinusem o losowej wysokości
 local function write_wav(path, bytes)
+  local n = bytes // 2
+  local freq = 180 + math.random(0, 300)
+  local data = {}
+  for i = 0, n - 1 do
+    local env = math.min(1, i / 2000) * (0.55 + 0.45 * math.sin(i / 9000))
+    data[#data + 1] = string.pack("<i2", math.floor(math.sin(2 * math.pi * freq * i / 44100) * 12000 * env))
+  end
+  local pcm = table.concat(data)
   local f = io.open(path, "wb")
-  f:write("RIFF" .. string.rep(string.char(math.random(0, 255)), bytes))
+  f:write("RIFF", string.pack("<I4", 36 + #pcm), "WAVEfmt ", string.pack("<I4I2I2I4I4I2I2", 16, 1, 1, 44100, 88200, 2, 16),
+    "data", string.pack("<I4", #pcm), pcm)
   f:close()
 end
 

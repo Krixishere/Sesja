@@ -1,0 +1,29 @@
+name: Testy
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  mod-i-serwery:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Zależności
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.4 libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri -> target
+      - name: Testy moda (Lua)
+        run: lua5.4 tests/test_chunks.lua
+      - name: Testy aplikacji (Rust)
+        run: cargo test --manifest-path app/src-tauri/Cargo.toml
+      - name: E2E z serwerem w Pythonie
+        run: python3 tests/run_e2e.py
+      - name: E2E z serwerem wbudowanym w aplikację
+        run: |
+          cargo build --manifest-path app/src-tauri/Cargo.toml
+          RMP_SERVER=rust python3 tests/run_e2e.py
