@@ -3,6 +3,15 @@
 Nagłówki wersji aplikacji mają postać `## Sesja X.Y.Z` – sekcja trafia automatycznie
 do opisu wydania na GitHubie.
 
+## Sesja 1.3.0
+
+- Własny serwer na Cloudflare (`server/cloudflare`): darmowy Worker + Durable Objects pod Twoją
+  domeną, np. `https://sesja.twojadomena.pl`. Wszyscy łączą się do jednego adresu – bez Tailscale,
+  zapory Windows i włączonego komputera gospodarza. Wdrożenie: dwie komendy (`wrangler deploy`).
+- Instrukcja „Jak połączyć” pokazuje drogę przez Cloudflare jako pierwszą.
+- Mod 1.4.0 i aplikacja wysyłają nazwę pokoju w adresie zapytania (szybsze przekierowanie
+  na serwerze Cloudflare; starsze serwery to ignorują).
+
 ## Sesja 1.2.0
 
 - Zapora Windows: gospodarz widzi w Studiu ostrzeżenie, gdy zapora może blokować znajomych,
@@ -56,6 +65,10 @@ do opisu wydania na GitHubie.
 - Studio: kto jest online, kto nagrywa i co kto dodał do projektu.
 - Czat, komentarze do klipów i lista wszystkich nagrań z odsłuchem i podglądem fali.
 - Automatyczne aktualizacje i ten dziennik zmian.
+
+## Mod 1.4.0
+
+- Współpraca z serwerem na Cloudflare (pokój w adresie zapytania).
 
 ## Mod 1.3.0
 

@@ -9,6 +9,7 @@ Projekt składa się z trzech części:
 |---|---|
 | **Aplikacja Sesja** (`app/`, Rust + Tauri) | Instalator, który sam szuka REAPERa i instaluje mod; wbudowany serwer („Zakładam sesję”); studio z listą osób, ścieżek i aktywności; czat; komentarze do klipów; odsłuch nagrań z falą dźwięku; auto-aktualizacje, dziennik zmian, wsparcie twórcy |
 | **Mod do REAPERa** (`reaper/ReaperMultiplayer.lua`) | Synchronizuje projekt, wysyła i pobiera audio, okno z czatem i komentarzami w samym REAPERze |
+| **Serwer na Cloudflare** (`server/cloudflare`) | Darmowy, zawsze włączony serwer pod Twoją domeną – bez Tailscale i zapory. Wdrożenie: `npx wrangler deploy` (instrukcja w folderze) |
 | **Serwer w Pythonie** (`server/rmp_server.py`) | Ten sam protokół co serwer w aplikacji – do postawienia na VPS bez instalowania aplikacji |
 
 ## Aplikacja Sesja

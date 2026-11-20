@@ -589,7 +589,7 @@ fn run(app: AppHandle, model: Arc<Mutex<Model>>, stop: Arc<AtomicBool>, conn: Co
             });
             (body, ops)
         };
-        let res = call(agent.post(&url(&conn, "/api/sync")), Some(&body), &conn);
+        let res = call(agent.post(&url(&conn, &format!("/api/sync?room={}", conn.room))), Some(&body), &conn);
         let mut more = false;
         {
             let mut m = model.lock().unwrap();

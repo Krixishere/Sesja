@@ -1,0 +1,12 @@
+{
+  "name": "sesja-cloudflare",
+  "private": true,
+  "description": "Serwer Sesji (REAPER Multiplayer) jako Cloudflare Worker + Durable Objects",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}

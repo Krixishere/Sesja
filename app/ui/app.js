@@ -385,7 +385,7 @@ function obProfile(body, foot) {
       <button class="mode ${OB.mode === "host" ? "on" : ""}" data-ob="mode-host"><b>${t("mode_host")}</b><small>${t("mode_host_text")}</small></button>
       <button class="mode ${OB.mode === "join" ? "on" : ""}" data-ob="mode-join"><b>${t("mode_join")}</b><small>${t("mode_join_text")}</small></button>
     </div>
-    ${OB.mode === "join" ? `<label class="field"><span>${t("server_addr")}</span><input class="input" id="ob-server" placeholder="http://100.101.102.103:8765" value="${esc(c.server)}"><small>${t("server_addr_hint")}</small></label>` : ""}
+    ${OB.mode === "join" ? `<label class="field"><span>${t("server_addr")}</span><input class="input" id="ob-server" placeholder="https://sesja.twojadomena.pl" value="${esc(c.server)}"><small>${t("server_addr_hint")}</small></label>` : ""}
     <div class="form-grid">
       <label class="field"><span>${t("room")}</span><input class="input" id="ob-room" placeholder="${esc(t("room_ph"))}" value="${esc(c.room)}"><small>${t("room_hint")}</small></label>
       <label class="field"><span>${t("password_opt")}</span><input class="input" id="ob-pass" type="password" value="${esc(pass)}"></label>
@@ -680,7 +680,7 @@ function studioEmpty() {
         ${icon("link", "width:28px;height:28px;color:var(--signal)")}
         <h3>${t("join_title")}</h3>
         <p>${t("join_text")}</p>
-        <div class="field"><input class="input" id="join-server" placeholder="http://100.101.102.103:8765" value="${esc(S.cfg.server)}"></div>
+        <div class="field"><input class="input" id="join-server" placeholder="https://sesja.twojadomena.pl" value="${esc(S.cfg.server)}"></div>
         <div class="form-grid">
           <input class="input" id="join-room" placeholder="${esc(t("room"))}" value="${esc(S.cfg.room)}">
           <input class="input" id="join-pass" type="password" placeholder="${esc(t("password_opt"))}" value="${esc(S.cfg.password)}">
@@ -855,8 +855,9 @@ RENDER.guide = () => {
       </li>`).join("")}
     </ol>
     <div class="guide-grid">
+      <section class="panel"><h2>${t("g_vps_t")}</h2><p class="muted">${t("g_vps_d")}</p>
+        <button class="btn ghost" style="margin-top:12px" data-url="${LINKS.repo}/tree/main/server/cloudflare">${icon("server")}${t("g_vps_btn")}</button></section>
       <section class="panel"><h2>${t("g_lan_t")}</h2><p class="muted">${t("g_lan_d")}</p></section>
-      <section class="panel"><h2>${t("g_vps_t")}</h2><p class="muted">${t("g_vps_d")}</p></section>
       <section class="panel"><h2>${t("g_fix_t")}</h2><div class="md"><ul><li>${t("g_fix_1")}</li><li>${t("g_fix_2")}</li><li>${t("g_fix_3")}</li></ul></div></section>
     </div>`;
 };

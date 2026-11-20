@@ -1,5 +1,5 @@
 -- @description REAPER Multiplayer – wspólna praca nad jednym projektem przez serwer
--- @version 1.3.0
+-- @version 1.4.0
 -- @author RMP
 -- @about
 --   Łączy REAPERa z serwerem RMP (server/rmp_server.py). Wszystkie zmiany ścieżek,
@@ -10,7 +10,7 @@
 --
 --   Wymagania: REAPER 6.0+, program curl (wbudowany w Windows 10/11 i macOS).
 
-local VERSION = "1.3.0"
+local VERSION = "1.4.0"
 local M = {}
 
 -------------------------------------------------------------------------------
@@ -1408,7 +1408,7 @@ local function do_sync()
   S.inflight = true
   local sentOps = ops
   local sessionCid = S.cid
-  http_json("POST", "/api/sync", body, function(resp, err)
+  http_json("POST", "/api/sync?room=" .. CFG.room, body, function(resp, err)
     if S.cid ~= sessionCid then return end -- odpowiedź z poprzedniej sesji
     S.inflight = false
     S.nextSync = now() + CFG.interval

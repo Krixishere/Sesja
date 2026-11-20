@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 app/src-tauri/target/
 app/src-tauri/gen/
+server/cloudflare/node_modules/
+server/cloudflare/.wrangler/

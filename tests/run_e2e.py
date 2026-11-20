@@ -29,7 +29,12 @@ def main():
     tmp = tempfile.mkdtemp(prefix="rmp_e2e_")
     port = free_port()
     server = f"http://127.0.0.1:{port}"
-    env = dict(os.environ, NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost")
+    # RMP_SERVER_URL=http://... -> test działającego już serwera (np. wrangler dev dla Cloudflare)
+    external = os.environ.get("RMP_SERVER_URL")
+    room = f"e2e{int(time.time())}" if external else "test"
+    if external:
+        server = external.rstrip("/")
+    env = dict(os.environ, NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost", RMP_ROOM=room)
     # RMP_SERVER=rust -> wbudowany serwer aplikacji Sesja (app/src-tauri/target/debug/sesja --serve)
     if os.environ.get("RMP_SERVER") == "rust":
         exe = os.path.join(ROOT, "app", "src-tauri", "target", "debug", "sesja")
@@ -37,7 +42,7 @@ def main():
     else:
         cmd = [sys.executable, os.path.join(ROOT, "server", "rmp_server.py"), "--port", str(port),
                "--host", "127.0.0.1", "--data", os.path.join(tmp, "data")]
-    srv = subprocess.Popen(cmd, env=env)
+    srv = subprocess.Popen(cmd, env=env) if not external else None
     try:
         for _ in range(50):
             try:
@@ -98,7 +103,7 @@ def main():
         check(any("Multiplayer" in u for u in b["undo"]), "zmiany zdalne lądują w historii cofania")
 
         # stan serwera
-        st = json.load(urllib.request.urlopen(server + "/api/state?room=test"))
+        st = json.load(urllib.request.urlopen(server + f"/api/state?room={room}"))
         check(len(st["tracks"]) == 2 and len(st["items"]) == 2, "serwer: 2 ścieżki, 2 klipy")
         check([c["text"] for c in st["chat"]] == ["Cześć Bartek, wrzuć gitarę!", "Refren od 0:12 jest za cichy"],
               "serwer: czat z polskimi znakami")
@@ -107,14 +112,16 @@ def main():
         vocal_srv = [i for i in st["items"].values() if "vocal" in i["chunk"]][0]
         check(vocal_srv["author"] == "Ania" and vocal_srv["editor"] == "Bartek",
               "serwer: klip Ani ostatnio edytowany przez Bartka")
-        files = os.listdir(os.path.join(tmp, "data", "test", "files"))
-        check(len(files) == 2, f"serwer: 2 pliki audio ({files})")
+        if not external:
+            files = os.listdir(os.path.join(tmp, "data", "test", "files"))
+            check(len(files) == 2, f"serwer: 2 pliki audio ({files})")
 
         print("\nWSZYSTKIE TESTY OK" if not fails else f"\nBŁĘDY: {len(fails)}")
         return 0 if not fails else 1
     finally:
-        srv.terminate()
-        srv.wait()
+        if srv:
+            srv.terminate()
+            srv.wait()
         if os.environ.get("KEEP") != "1":
             shutil.rmtree(tmp, ignore_errors=True)
         else:

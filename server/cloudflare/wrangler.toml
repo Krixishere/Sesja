@@ -1,0 +1,18 @@
+# Serwer Sesji na Cloudflare. Wdrożenie: zobacz README.md w tym folderze.
+name = "sesja-server"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+
+# Każdy pokój to osobny Durable Object (SQLite) – trzyma projekt, czat, komentarze i pliki audio.
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
+
+# Własna domena (odkomentuj i wpisz swoją – domena musi być na tym koncie Cloudflare):
+# routes = [{ pattern = "sesja.twojadomena.pl", custom_domain = true }]
+
+# Hasło serwera (opcjonalne) ustawiasz jako sekret:  npx wrangler secret put PASSWORD

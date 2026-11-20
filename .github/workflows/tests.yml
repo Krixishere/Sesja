@@ -25,6 +25,12 @@ jobs:
         run: cargo test --manifest-path app/src-tauri/Cargo.toml
       - name: E2E z serwerem w Pythonie
         run: python3 tests/run_e2e.py
+      - name: E2E z serwerem na Cloudflare (wrangler dev)
+        run: |
+          cd server/cloudflare && npm ci
+          npx wrangler dev --port 8799 --ip 127.0.0.1 > /tmp/wrangler.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8799/api/ping && break; sleep 1; done
+          cd ../.. && RMP_SERVER_URL=http://127.0.0.1:8799 python3 tests/run_e2e.py
       - name: E2E z serwerem wbudowanym w aplikację
         run: |
           cargo build --manifest-path app/src-tauri/Cargo.toml
