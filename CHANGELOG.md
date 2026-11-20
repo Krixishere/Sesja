@@ -3,6 +3,21 @@
 Nagłówki wersji aplikacji mają postać `## Sesja X.Y.Z` – sekcja trafia automatycznie
 do opisu wydania na GitHubie.
 
+## Sesja 1.1.0
+
+- Koniec z migającym oknem konsoli na Windows: mod w REAPERze uruchamia połączenia
+  w tle, bez czarnego okienka co sekundę.
+- Nowa zakładka „Jak połączyć” – instrukcja krok po kroku (Tailscale, zakładanie sesji,
+  dołączanie), z animowanym schematem i odhaczaniem kroków.
+- Osoba, która jest naraz w REAPERze i w aplikacji, pokazuje się raz – z plakietkami
+  REAPER i Sesja.
+- Więcej życia w interfejsie: fala pod nazwą pokoju i miernik w pasku bocznym reagują
+  na zmiany od innych, przesuwany znacznik zakładki, pulsujący pierścień przy nagrywaniu,
+  „equalizer” przy odtwarzaniu, płynne wejście paneli.
+- Nowy wygląd okna moda w REAPERze (mod 1.3.0): żywy wskaźnik VU, karty osób
+  z awatarami i plakietkami, zakładki z przesuwanym podświetleniem, animowane wpisy,
+  powiadomienia o nowych wiadomościach i komentarzach.
+
 ## Sesja 1.0.1
 
 - Naprawiony błąd „invalid args `resource` for command `install_mod`”, gdy REAPER był
@@ -25,6 +40,11 @@ do opisu wydania na GitHubie.
 - Studio: kto jest online, kto nagrywa i co kto dodał do projektu.
 - Czat, komentarze do klipów i lista wszystkich nagrań z odsłuchem i podglądem fali.
 - Automatyczne aktualizacje i ten dziennik zmian.
+
+## Mod 1.3.0
+
+- Windows: curl uruchamiany przez wscript bez okna konsoli (koniec z miganiem).
+- Nowy wygląd okna, animacje, łączenie tej samej osoby z REAPERa i aplikacji.
 
 ## Mod 1.2.0
 

@@ -1,5 +1,5 @@
 -- @description REAPER Multiplayer – wspólna praca nad jednym projektem przez serwer
--- @version 1.2.0
+-- @version 1.3.0
 -- @author RMP
 -- @about
 --   Łączy REAPERa z serwerem RMP (server/rmp_server.py). Wszystkie zmiany ścieżek,
@@ -10,7 +10,7 @@
 --
 --   Wymagania: REAPER 6.0+, program curl (wbudowany w Windows 10/11 i macOS).
 
-local VERSION = "1.2.0"
+local VERSION = "1.3.0"
 local M = {}
 
 -------------------------------------------------------------------------------
@@ -397,6 +397,26 @@ end
 
 function M.id_size(id) return tonumber(id:match("~(%d+)~%x+")) end
 
+--- Tekst UTF-8 -> UTF-16LE z BOM (plik czytany przez skrypt VBS na Windows).
+function M.utf16le(s)
+  local out = { "\255\254" }
+  local ok = pcall(function()
+    for _, cp in utf8.codes(s) do
+      if cp >= 0x10000 then
+        cp = cp - 0x10000
+        out[#out + 1] = string.pack("<I2I2", 0xD800 + (cp >> 10), 0xDC00 + (cp & 0x3FF))
+      else
+        out[#out + 1] = string.pack("<I2", cp)
+      end
+    end
+  end)
+  if not ok then -- niepoprawny UTF-8: bajt po bajcie
+    out = { "\255\254" }
+    for i = 1, #s do out[#out + 1] = string.pack("<I2", s:byte(i)) end
+  end
+  return table.concat(out)
+end
+
 function M.fmt_pos(sec)
   sec = math.max(0, sec or 0)
   local h = math.floor(sec / 3600)
@@ -436,6 +456,7 @@ local CFG = {
   interval = tonumber(get_ext("interval", "1.0")) or 1.0,
   colorize = get_ext("colorize", "1") == "1",
   lang = get_ext("lang", "pl"), -- ustawia aplikacja Sesja; pl albo en (inne -> en)
+  hidden = get_ext("hidden", "1") == "1", -- Windows: curl bez migającego okna konsoli
 }
 
 -------------------------------------------------------------------------------
@@ -474,6 +495,8 @@ local L = {
     header = "Pokój: %s   •   Ty: %s   •   %s", online = "Online:", only_you = "tylko Ty",
     in_app = "%s  (aplikacja Sesja)", input_ph = "Napisz wiadomość (Enter = wyślij na czat)…", send = "Wyślij",
     comment_on = "Komentarz do „%s”", comment_at = "Komentarz @ %s",
+    in_session = "W sesji", app_only = "tylko w aplikacji", new_comment = "komentarz: %s",
+    nobody = "Nikogo jeszcze nie ma", subtitle = "REAPER Multiplayer · pokój %s",
   },
   en = {
     track_add = "added track “%s”", track_edit = "changed track “%s”", track_del = "deleted track “%s”",
@@ -507,6 +530,8 @@ local L = {
     header = "Room: %s   •   You: %s   •   %s", online = "Online:", only_you = "just you",
     in_app = "%s  (Sesja app)", input_ph = "Write a message (Enter = send to chat)…", send = "Send",
     comment_on = "Comment on “%s”", comment_at = "Comment @ %s",
+    in_session = "In the session", app_only = "app only", new_comment = "comment: %s",
+    nobody = "Nobody here yet", subtitle = "REAPER Multiplayer · room %s",
   },
 }
 local function T(key, ...)
@@ -542,9 +567,12 @@ local function reset_state()
 end
 reset_state()
 local FEED = {} -- czat / aktywność / komentarze (przeżywa rozłączenie)
+-- Poziom „aktywności” napędza wskaźnik VU w nagłówku; toast to krótkie powiadomienie w oknie.
+local ACTIVITY = { level = 0, toast = nil }
 
 local function feed_add(e)
   e.ts = e.ts or os.time()
+  e.t0 = e.t0 or now() -- moment pojawienia się – do animacji wejścia
   FEED[#FEED + 1] = e
   if #FEED > 600 then table.remove(FEED, 1) end
 end
@@ -673,10 +701,38 @@ local function new_tmp(ext)
   return TMP .. SEP .. S.cid .. "_" .. jobCounter .. "." .. ext
 end
 
+-- Na Windows curl.exe to program konsolowy: uruchomiony wprost przez ExecProcess
+-- na ułamek sekundy pokazuje czarne okno (co sekundę!). Dlatego uruchamiamy go przez
+-- wscript.exe (program bez konsoli) i mały skrypt VBS, który startuje curl z ukrytym oknem.
+-- Polecenie trafia do pliku w UTF-16, żeby ścieżki z polskimi znakami działały.
+local HIDDEN_VBS = nil
+local WSCRIPT = (os.getenv("WINDIR") or "C:\\Windows") .. "\\System32\\wscript.exe"
+
+local function hidden_runner()
+  if HIDDEN_VBS and file_exists(HIDDEN_VBS) then return HIDDEN_VBS end
+  HIDDEN_VBS = TMP .. SEP .. "sesja_hidden.vbs"
+  write_file(HIDDEN_VBS, table.concat({
+    "' Sesja: uruchamia polecenie z pliku bez okna konsoli",
+    "Dim fso, f, cmd",
+    "Set fso = CreateObject(\"Scripting.FileSystemObject\")",
+    "Set f = fso.OpenTextFile(WScript.Arguments(0), 1, False, -1)",
+    "cmd = f.ReadAll",
+    "f.Close",
+    "fso.DeleteFile WScript.Arguments(0)",
+    "CreateObject(\"WScript.Shell\").Run cmd, 0, False",
+  }, "\r\n") .. "\r\n")
+  return HIDDEN_VBS
+end
+
 local function run(cmd)
-  -- -1 = nie czekaj na zakończenie; wynik odczytujemy z pliku. Wartość zwracana
-  -- przy -1 nie jest wiarygodna, więc błędy wykrywamy przez timeout.
-  r.ExecProcess(cmd, -1)
+  -- nie czekamy na zakończenie; wynik odczytujemy z pliku, a błędy wykrywamy przez timeout
+  if IS_WIN and CFG.hidden and file_exists(WSCRIPT) then
+    local cmdfile = new_tmp("cmd")
+    write_file(cmdfile, M.utf16le(cmd))
+    r.ExecProcess(q(WSCRIPT) .. " //B //Nologo " .. q(hidden_runner()) .. " " .. q(cmdfile), -1)
+  else
+    r.ExecProcess(cmd, -1)
+  end
   return true
 end
 
@@ -1177,6 +1233,7 @@ end
 
 local function note_op(op)
   local t, g, user = op.t, op.guid, op.user or "?"
+  if op.cid ~= S.cid then ACTIVITY.level = math.min(1, ACTIVITY.level + 0.35) end
   local ts = os.time()
   if t == "track" then
     local isNew = not S.meta[g]
@@ -1216,6 +1273,7 @@ local function note_op(op)
     feed_activity(op, T("tempo", tonumber(op.bpm) or 0), "tempo")
   elseif t == "chat" then
     feed_add({ kind = "chat", user = user, text = op.text or "" })
+    if op.cid ~= S.cid then ACTIVITY.toast = { user = user, text = op.text or "", t0 = now() } end
   elseif t == "comment" and op.id then
     S.comments[op.id] = {
       id = op.id, pos = tonumber(op.pos) or 0, text = op.text or "", user = user,
@@ -1223,6 +1281,7 @@ local function note_op(op)
     }
     feed_add({ kind = "comment", user = user, text = op.text or "", pos = tonumber(op.pos) or 0, id = op.id,
       item = op.item, itemName = op.itemName })
+    if op.cid ~= S.cid then ACTIVITY.toast = { user = user, text = T("new_comment", op.text or ""), t0 = now() } end
     rebuild_markers()
   elseif t == "comment_del" and op.id then
     S.comments[op.id] = nil
@@ -1598,39 +1657,130 @@ end
 -------------------------------------------------------------------------------
 -- Interfejs (gfx)
 -------------------------------------------------------------------------------
-local UI = { input = "", tab = 1, scroll = 0, caret = 0, hits = {} }
-local mouse = { l = false, r = false, x = 0, y = 0, clicked = false, rclicked = false }
+local remove_item_comment_marker
+local UI = { input = "", tab = 1, scroll = 0, hits = {}, a = {}, lastT = nil, dt = 1 / 30, needle = nil, needleV = 0 }
+local mouse = { l = false, r = false, x = 0, y = 0, clicked = false, rclicked = false, wheel = 0 }
 local TABS = { "tab_all", "tab_chat", "tab_comments", "tab_activity" }
 
+-- Paleta jak w aplikacji Sesja: granat studyjny, bursztyn wskaźnika VU, krem taśmy.
+local C = {
+  ink = { 14, 20, 36 }, ink2 = { 11, 16, 32 }, panel = { 22, 30, 51 }, panel2 = { 28, 37, 64 },
+  raise = { 36, 46, 78 }, line = { 44, 53, 82 }, paper = { 234, 227, 210 }, paper2 = { 201, 195, 180 },
+  muted = { 142, 149, 171 }, dim = { 93, 100, 122 }, amber = { 243, 167, 59 }, amberHi = { 247, 183, 88 },
+  amberInk = { 42, 26, 4 }, rec = { 240, 82, 79 }, signal = { 95, 201, 181 },
+}
+
+local function col(c, a) gfx.set(c[1] / 255, c[2] / 255, c[3] / 255, a or 1) end
+local function mix(c1, c2, t) return { c1[1] + (c2[1] - c1[1]) * t, c1[2] + (c2[2] - c1[2]) * t, c1[3] + (c2[3] - c1[3]) * t } end
 local function set_rgb(rr, gg, bb, a) gfx.set(rr / 255, gg / 255, bb / 255, a or 1) end
 local function set_hex(hex, a)
   local rr, gg, bb = hex_to_rgb(hex)
   set_rgb(rr, gg, bb, a)
 end
+local function hex_c(hex) local rr, gg, bb = hex_to_rgb(hex) return { rr, gg, bb } end
 
 local function color_of(user)
-  if user == "system" then return "#9aa0a6" end
-  return user_color_hex(user) or "#c8c8c8"
+  if user == "system" then return "#8e95ab" end
+  return user_color_hex(user) or "#c9c3b4"
 end
 
 local function inside(x, y, w, h) return mouse.x >= x and mouse.x < x + w and mouse.y >= y and mouse.y < y + h end
 
-local function button(x, y, w, h, label, active)
-  local hover = inside(x, y, w, h)
-  if active then
-    set_rgb(70, 110, 170)
-  elseif hover then
-    set_rgb(72, 72, 78)
-  else
-    set_rgb(52, 52, 58)
+-- Płynne przejście wartości (hover, położenie zakładki itp.); niezależne od liczby klatek.
+local function anim(key, target, speed)
+  local cur = UI.a[key]
+  if cur == nil then
+    UI.a[key] = target
+    return target
   end
-  gfx.rect(x, y, w, h, 1)
-  set_rgb(225, 225, 230)
-  gfx.setfont(2)
+  cur = cur + (target - cur) * math.min(1, UI.dt * (speed or 14))
+  if math.abs(target - cur) < 0.002 then cur = target end
+  UI.a[key] = cur
+  return cur
+end
+
+-- Wypełniony prostokąt z zaokrąglonymi rogami (gfx ma tylko obrys roundrect).
+local function rrect(x, y, w, h, rad)
+  x, y, w, h = math.floor(x), math.floor(y), math.floor(w), math.floor(h)
+  rad = math.floor(math.max(0, math.min(rad, h / 2, w / 2)))
+  if rad < 1 then gfx.rect(x, y, w, h, 1) return end
+  gfx.rect(x + rad, y, w - 2 * rad, h, 1)
+  gfx.rect(x, y + rad, rad, h - 2 * rad, 1)
+  gfx.rect(x + w - rad, y + rad, rad, h - 2 * rad, 1)
+  gfx.circle(x + rad, y + rad, rad, 1, 1)
+  gfx.circle(x + w - rad - 1, y + rad, rad, 1, 1)
+  gfx.circle(x + rad, y + h - rad - 1, rad, 1, 1)
+  gfx.circle(x + w - rad - 1, y + h - rad - 1, rad, 1, 1)
+end
+
+-- Łuk o zadanej grubości (z odcinków – niezależny od konwencji kątów gfx.arc).
+local function arc(cx, cy, rad, a0, a1, thick)
+  local steps = math.max(8, math.floor(math.abs(a1 - a0) * rad / 2.5))
+  local k = -thick / 2
+  while k <= thick / 2 do
+    local rr, px, py = rad + k, nil, nil
+    for i = 0, steps do
+      local ang = a0 + (a1 - a0) * i / steps
+      local x, y = cx + math.cos(ang) * rr, cy + math.sin(ang) * rr
+      if px then gfx.line(px, py, x, y, 1) end
+      px, py = x, y
+    end
+    k = k + 0.6
+  end
+end
+
+local function text_at(x, y, str, font, c, a)
+  gfx.setfont(font)
+  col(c, a)
+  gfx.x, gfx.y = x, y
+  gfx.drawstr(str)
+end
+
+local function ellipsize(str, maxw)
+  if gfx.measurestr(str) <= maxw then return str end
+  while #str > 1 and gfx.measurestr(str .. "…") > maxw do
+    str = str:sub(1, (utf8.offset(str, -1) or #str) - 1)
+  end
+  return str .. "…"
+end
+
+-- Przycisk-pigułka. kind: primary | ghost | soft
+local function button(x, y, w, h, label, kind, key)
+  key = key or label
+  local hover = inside(x, y, w, h)
+  local hv = anim("b:" .. key, hover and 1 or 0, 18)
+  local press = hover and mouse.l and 1 or 0
+  local inset = press
+  if kind == "primary" then
+    col(mix(C.amber, C.amberHi, hv))
+  elseif kind == "ghost" then
+    col(mix(C.ink, C.panel2, hv))
+  else
+    col(mix(C.panel2, C.raise, hv))
+  end
+  rrect(x + inset, y + inset, w - 2 * inset, h - 2 * inset, h / 2)
+  if kind == "ghost" then
+    col(mix(C.line, C.amber, hv * 0.6))
+    gfx.roundrect(x + inset, y + inset, w - 2 * inset - 1, h - 2 * inset - 1, (h - 2 * inset) / 2, 1)
+  end
+  gfx.setfont(kind == "primary" and 5 or 2)
+  col(kind == "primary" and C.amberInk or C.paper)
   local tw, th = gfx.measurestr(label)
-  gfx.x, gfx.y = x + (w - tw) / 2, y + (h - th) / 2
+  gfx.x, gfx.y = math.floor(x + (w - tw) / 2), math.floor(y + (h - th) / 2)
   gfx.drawstr(label)
   return hover and mouse.clicked
+end
+
+local function avatar(cx, cy, rad, name, color)
+  col(hex_c(color))
+  gfx.circle(cx, cy, rad, 1, 1)
+  gfx.setfont(rad >= 12 and 6 or 7)
+  col(C.ink)
+  local ini = (name or "?"):match("^[%z\1-\127\194-\244][\128-\191]*") or "?"
+  ini = ini:upper()
+  local tw, th = gfx.measurestr(ini)
+  gfx.x, gfx.y = math.floor(cx - tw / 2 + 0.5), math.floor(cy - th / 2 + 0.5)
+  gfx.drawstr(ini)
 end
 
 local function wrap(text, firstW, restW)
@@ -1671,69 +1821,76 @@ local LH = 18
 local function layout_entry(e, W)
   local text = entry_text(e)
   if e._w == W and e._t == text then return e._lines end
-  gfx.setfont(2)
-  local tw = gfx.measurestr("00:00  ")
-  gfx.setfont(3)
-  local nw = gfx.measurestr((e.user or "?") .. "  ")
   gfx.setfont(1)
-  e._lines = wrap(text, W - tw - nw, W - tw)
-  e._w, e._t, e._tw, e._nw = W, text, tw, nw
+  e._lines = wrap(text, W, W)
+  e._w, e._t = W, text
   return e._lines
 end
 
+local function entry_height(e, W) return LH + #layout_entry(e, W) * LH + 10 end
+
 local function draw_feed(x, y, w, h)
-  set_rgb(24, 24, 27)
-  gfx.rect(x, y, w, h, 1)
+  col(C.panel)
+  rrect(x, y, w, h, 12)
   local list = {}
   for _, e in ipairs(FEED) do if entry_visible(e) then list[#list + 1] = e end end
-  local innerW = w - 16
+  local textX = x + 40
+  local innerW = w - 40 - 14
   local total = 0
-  for _, e in ipairs(list) do total = total + #layout_entry(e, innerW) * LH + 4 end
-  local maxScroll = math.max(0, total - (h - 8))
+  for _, e in ipairs(list) do total = total + entry_height(e, innerW) end
+  local viewH = h - 12
+  local maxScroll = math.max(0, total - viewH)
   UI.scroll = math.max(0, math.min(UI.scroll, maxScroll))
-  local by = y + h - 4 + UI.scroll
+  local scroll = anim("scroll", UI.scroll, 16)
+  local by = y + h - 6 + scroll
+  local t = now()
   UI.hits = {}
+  if #list == 0 then
+    text_at(x + 16, y + 16, T("select_hint"), 2, C.dim)
+  end
   for i = #list, 1, -1 do
     local e = list[i]
     local lines = layout_entry(e, innerW)
-    local eh = #lines * LH + 4
+    local eh = LH + #lines * LH + 10
     local ey = by - eh
     if ey + eh < y then break end
-    if ey < y + h then
-      if e.kind == "comment" and inside(x, math.max(y, ey), w, eh) then
-        set_rgb(40, 44, 54)
-        gfx.rect(x + 2, math.max(y, ey), w - 4, math.min(eh, y + h - ey), 1)
+    -- wejście: łagodne pojawienie się i wysunięcie o kilka pikseli
+    local k = math.min(1, math.max(0, (t - (e.t0 or 0)) / 0.35))
+    local ease = 1 - (1 - k) * (1 - k) * (1 - k)
+    local dy = math.floor((1 - ease) * 8)
+    local alpha = ease
+    if ey >= y - 2 and ey + eh <= y + h + 2 then
+      local hover = e.kind == "comment" and inside(x, ey, w, eh)
+      local hv = anim("h:" .. tostring(e), hover and 1 or 0, 16)
+      if hv > 0.01 then
+        col(mix(C.panel, C.panel2, hv))
+        rrect(x + 6, ey + 2, w - 12, eh - 4, 8)
       end
+      if e.kind == "comment" then
+        col(C.amber, alpha)
+        rrect(x + 8, ey + 6 + dy, 3, eh - 12, 1)
+      end
+      avatar(x + 26, ey + 14 + dy, 10, e.user == "system" and "•" or e.user, color_of(e.user))
+      gfx.setfont(3)
+      local name = e.user == "system" and "Sesja" or (e.user or "?")
+      text_at(textX, ey + 5 + dy, name, 3, hex_c(color_of(e.user)), alpha)
+      local nw = gfx.measurestr(name)
+      local tstr = os.date("%H:%M", e.ts)
+      text_at(textX + nw + 8, ey + 6 + dy, tstr, 2, C.dim, alpha)
       for li, line in ipairs(lines) do
-        local ly = ey + 2 + (li - 1) * LH
-        if ly >= y and ly + LH <= y + h then
-          gfx.x, gfx.y = x + 8, ly
-          if li == 1 then
-            gfx.setfont(2)
-            set_rgb(120, 120, 128)
-            gfx.drawstr(os.date("%H:%M", e.ts))
-            gfx.x = x + 8 + e._tw
-            gfx.setfont(3)
-            set_hex(color_of(e.user))
-            gfx.drawstr(e.user or "?")
-            gfx.x = x + 8 + e._tw + e._nw
-          else
-            gfx.x = x + 8 + e._tw
-          end
-          gfx.setfont(1)
-          if e.kind == "act" then
-            set_rgb(165, 168, 175)
-          elseif e.kind == "comment" then
-            set_rgb(250, 215, 120)
-          else
-            set_rgb(232, 232, 236)
-          end
-          gfx.drawstr(line)
-        end
+        local tc = e.kind == "act" and C.muted or e.kind == "comment" and C.amber or C.paper
+        text_at(textX, ey + 5 + LH * li + dy, line, 1, tc, alpha)
       end
       UI.hits[#UI.hits + 1] = { e = e, y = ey, h = eh }
     end
     by = ey
+  end
+  -- delikatne wygaszenie u góry listy, gdy coś jest przewinięte
+  if maxScroll - scroll > 2 then
+    for i = 0, 10 do
+      col(C.panel, 1 - i / 11)
+      gfx.rect(x + 6, y + 6 + i, w - 12, 1, 1)
+    end
   end
   if mouse.wheel ~= 0 and inside(x, y, w, h) then
     UI.scroll = UI.scroll + mouse.wheel / 120 * LH * 3
@@ -1810,7 +1967,7 @@ local function add_item_comment(item, txt, id)
   return { t = "comment", id = id, pos = cur, text = txt, item = item_guid(item), itemName = name }
 end
 
-local function remove_item_comment_marker(c)
+function remove_item_comment_marker(c)
   if not c or not c.item then return end
   for i = 0, r.CountMediaItems(0) - 1 do
     local it = r.GetMediaItem(0, i)
@@ -1896,171 +2053,328 @@ local function handle_keys()
   return true
 end
 
+local function merged_users()
+  -- ta sama osoba może być naraz w REAPERze i w aplikacji – pokazujemy ją raz, z dwiema plakietkami
+  local list, by = {}, {}
+  for _, u in ipairs(S.users) do
+    local e = by[u.name]
+    if not e then
+      e = { name = u.name, color = u.color, reaper = false, app = false, pos = 0 }
+      by[u.name] = e
+      list[#list + 1] = e
+    end
+    if u.app then
+      e.app = true
+    else
+      e.reaper, e.pos, e.play, e.rec, e.sel = true, u.pos or 0, u.play, u.rec, u.sel
+    end
+  end
+  return list
+end
+
+local function draw_vu(cx, cy, rad)
+  local a0, a1 = math.pi * 1.12, math.pi * 1.88
+  local lvl = 0.1 + ACTIVITY.level * 0.85
+  if S.state == "on" then lvl = lvl + 0.04 * math.sin(now() * 2.3) end
+  if S.state == "connecting" then lvl = 0.35 + 0.3 * math.sin(now() * 6) end
+  local target = a0 + (a1 - a0) * math.max(0, math.min(1, lvl))
+  if not UI.needle then UI.needle = a0 end
+  -- wskazówka na sprężynie (tłumienie ~0.75), jak prawdziwy miernik
+  local k = 170
+  local c = 2 * 0.75 * math.sqrt(k)
+  local acc = -k * (UI.needle - target) - c * UI.needleV
+  UI.needleV = UI.needleV + acc * UI.dt
+  UI.needle = UI.needle + UI.needleV * UI.dt
+  col(C.line)
+  arc(cx, cy, rad, a0, a1, 2.4)
+  col(C.rec)
+  arc(cx, cy, rad, a0 + (a1 - a0) * 0.8, a1, 2.4)
+  col(C.amber)
+  arc(cx, cy, rad, a0, math.max(a0, math.min(a1, UI.needle)), 2.4)
+  local nx, ny = cx + math.cos(UI.needle) * rad * 0.92, cy + math.sin(UI.needle) * rad * 0.92
+  for o = -0.6, 0.6, 0.6 do gfx.line(cx + o, cy, nx + o, ny, 1) end
+  gfx.circle(cx, cy, 3, 1, 1)
+end
+
+local function status_pill(x, y, st)
+  local label, c
+  if st == "on" then
+    label, c = T("st_on"), C.signal
+  elseif st == "connecting" then
+    label, c = T("st_connecting"), C.amber
+  elseif st == "error" then
+    label, c = T("st_error"), C.rec
+  else
+    label, c = T("st_off"), C.muted
+  end
+  gfx.setfont(2)
+  local tw = gfx.measurestr(label)
+  local w = tw + 30
+  col(C.panel2)
+  rrect(x - w, y, w, 22, 11)
+  -- „oddychająca” kropka: puls przy łączeniu i błędzie, delikatna poświata przy połączeniu
+  local pulse = (st == "connecting" or st == "error") and (0.5 + 0.5 * math.sin(now() * 5)) or 1
+  if st == "on" then
+    col(c, 0.22 + 0.1 * math.sin(now() * 2))
+    gfx.circle(x - w + 13, y + 11, 6, 1, 1)
+  end
+  col(c, 0.4 + 0.6 * pulse)
+  gfx.circle(x - w + 13, y + 11, 3.5, 1, 1)
+  text_at(x - w + 22, y + 4, label, 2, C.paper2)
+  return w
+end
+
+local function person_card(x, y, u, maxw)
+  local state, sc
+  if u.reaper then
+    if u.rec then
+      state, sc = "REC " .. M.fmt_pos(u.pos), C.rec
+    elseif u.play then
+      state, sc = M.fmt_pos(u.pos), C.paper2
+    else
+      state, sc = "@ " .. M.fmt_pos(u.pos), C.muted
+    end
+  else
+    state, sc = T("app_only"), C.muted
+  end
+  gfx.setfont(3)
+  local nw = gfx.measurestr(u.name)
+  gfx.setfont(7)
+  local b1 = u.reaper and gfx.measurestr("REAPER") + 12 or 0
+  local b2 = u.app and gfx.measurestr("Sesja") + 12 or 0
+  gfx.setfont(2)
+  local sw = gfx.measurestr(state) + (u.play and not u.rec and 12 or 0)
+  local w = math.min(maxw, 52 + math.max(nw + 6 + b1 + b2 + (b1 > 0 and b2 > 0 and 4 or 0), sw) + 14)
+  local h = 46
+  local hover = inside(x, y, w, h)
+  local hv = anim("p:" .. u.name, hover and 1 or 0, 16)
+  col(mix(C.panel2, C.raise, hv))
+  rrect(x, y, w, h, 12)
+  local ax, ay = x + 24, y + 23
+  if u.rec then
+    -- pulsujący pierścień nagrywania
+    local p = (now() * 1.4) % 1
+    col(C.rec, (1 - p) * 0.8)
+    gfx.circle(ax, ay, 15 + p * 7, 0, 1)
+    col(C.rec)
+    gfx.circle(ax, ay, 16, 0, 1)
+  end
+  avatar(ax, ay, 14, u.name, u.color)
+  text_at(x + 46, y + 6, ellipsize(u.name, w - 60 - b1 - b2), 3, C.paper)
+  gfx.setfont(3)
+  local bx = x + 46 + math.min(gfx.measurestr(u.name), w - 60 - b1 - b2) + 6
+  local function badge(label, c)
+    gfx.setfont(7)
+    local bw = gfx.measurestr(label) + 12
+    col(mix(C.panel2, c, 0.25))
+    rrect(bx, y + 8, bw, 15, 7)
+    text_at(bx + 6, y + 9, label, 7, c)
+    bx = bx + bw + 4
+  end
+  if u.reaper then badge("REAPER", C.amber) end
+  if u.app then badge("Sesja", C.signal) end
+  local sx = x + 46
+  if u.play and not u.rec and u.reaper then
+    col(C.paper2)
+    gfx.triangle(sx, y + 28, sx, y + 36, sx + 7, y + 32)
+    sx = sx + 12
+  end
+  text_at(sx, y + 25, ellipsize(state .. ((u.sel and u.sel ~= "") and ("  ·  " .. u.sel) or ""), x + w - sx - 10), 2, sc)
+  return w, h
+end
+
+local function draw_toast(x, y, w)
+  local ts = ACTIVITY.toast
+  if not ts then return end
+  local age = now() - ts.t0
+  if age > 4.6 then
+    ACTIVITY.toast = nil
+    return
+  end
+  local a = math.min(1, age / 0.2) * math.min(1, (4.6 - age) / 0.4)
+  local dy = math.floor((1 - math.min(1, age / 0.25)) * -10)
+  col(C.raise, 0.96 * a)
+  rrect(x, y + dy, w, 40, 10)
+  col(C.amber, a)
+  rrect(x + 8, y + 10 + dy, 3, 20, 1)
+  avatar(x + 28, y + 20 + dy, 10, ts.user, color_of(ts.user))
+  gfx.setfont(3)
+  local nw = gfx.measurestr(ts.user)
+  text_at(x + 44, y + 11 + dy, ts.user, 3, hex_c(color_of(ts.user)), a)
+  gfx.setfont(1)
+  text_at(x + 52 + nw, y + 11 + dy, ellipsize(ts.text, w - 64 - nw), 1, C.paper, a)
+end
+
 local function draw()
   local W, H = gfx.w, gfx.h
-  set_rgb(32, 32, 36)
-  gfx.rect(0, 0, W, H, 1)
-  local pad = 10
-  local y = 10
+  local t = now()
+  UI.dt = UI.lastT and math.max(0.001, math.min(0.1, t - UI.lastT)) or 1 / 30
+  UI.lastT = t
+  ACTIVITY.level = math.max(0, ACTIVITY.level - UI.dt * 0.5)
 
-  -- nagłówek
-  local st = S.state
-  local dot, label
-  if st == "on" then
-    dot, label = { 80, 200, 120 }, T("st_on")
-  elseif st == "connecting" then
-    dot, label = { 230, 190, 70 }, T("st_connecting")
-  elseif st == "error" then
-    dot, label = { 230, 80, 80 }, T("st_error")
-  else
-    dot, label = { 120, 120, 120 }, T("st_off")
+  col(C.ink)
+  gfx.rect(0, 0, W, H, 1)
+  -- delikatna bursztynowa poświata za wskaźnikiem
+  for i = 0, 8 do
+    col(C.amber, 0.004 * (8 - i) * (0.6 + ACTIVITY.level))
+    gfx.circle(30, 40, 8 + i * 3, 1, 1)
   end
-  set_rgb(dot[1], dot[2], dot[3])
-  gfx.circle(pad + 6, y + 9, 5, 1)
-  gfx.setfont(3)
-  set_rgb(235, 235, 240)
-  gfx.x, gfx.y = pad + 18, y + 1
-  gfx.drawstr(label)
-  local nup, ndown = 0, 0
+  local pad = 14
+  local st = S.state
+
+  -- nagłówek: żywy wskaźnik VU, nazwa, pokój, status i przyciski
+  draw_vu(30, 40, 16)
+  text_at(56, 12, "Sesja", 4, C.paper)
+  gfx.setfont(2)
+  local sub = T("subtitle", CFG.room)
+  local nup, ndown, npend = 0, 0, 0
   for _ in pairs(S.uploads) do nup = nup + 1 end
   for _ in pairs(S.downloads) do ndown = ndown + 1 end
-  local npend = 0
   for _ in pairs(S.pending) do npend = npend + 1 end
-  if nup + ndown + npend > 0 then
-    gfx.setfont(2)
-    set_rgb(150, 190, 240)
-    gfx.drawstr(T("pending", nup, ndown, npend))
-  end
-  if #S.deferred > 0 then
-    gfx.setfont(2)
-    set_rgb(240, 120, 120)
-    gfx.drawstr(T("recording_wait"))
-  end
+  text_at(56, 36, ellipsize(sub, W - 56 - 250), 2, C.muted)
 
-  local bw = 84
-  if button(W - pad - bw, y - 1, bw, 22, (st == "off") and T("connect") or T("disconnect")) then
+  local bw = gfx.measurestr(st == "off" and T("connect") or T("disconnect")) + 28
+  if button(W - pad - bw, 12, bw, 26, (st == "off") and T("connect") or T("disconnect"), st == "off" and "primary" or "soft", "conn") then
     if st == "off" then
       if (CFG.user ~= "" or open_settings()) then connect() end
     else
       disconnect()
     end
   end
-  if button(W - pad - bw - 6 - 60, y - 1, 60, 22, T("menu")) then show_menu() end
-  y = y + 26
+  local mw = gfx.measurestr(T("menu")) + 26
+  if button(W - pad - bw - 6 - mw, 12, mw, 26, T("menu"), "ghost", "menu") then show_menu() end
+  status_pill(W - pad, 44, st)
+  local y = 72
 
-  gfx.setfont(2)
-  set_rgb(150, 150, 158)
-  gfx.x, gfx.y = pad, y
-  gfx.drawstr(T("header", CFG.room, CFG.user ~= "" and CFG.user or "?", CFG.server))
-  y = y + 18
-  if S.err then
-    set_rgb(240, 120, 120)
-    gfx.x, gfx.y = pad, y
-    gfx.drawstr(S.err)
-    y = y + 18
-  end
-
-  -- osoby online
-  y = y + 4
-  gfx.setfont(3)
-  set_rgb(200, 200, 205)
-  gfx.x, gfx.y = pad, y
-  gfx.drawstr(T("online"))
-  local cx = pad + gfx.measurestr(T("online")) + 10
-  gfx.setfont(2)
-  if #S.users == 0 then
-    set_rgb(120, 120, 128)
-    gfx.x, gfx.y = cx, y + 1
-    gfx.drawstr(st == "on" and T("only_you") or "–")
-  end
-  for _, u in ipairs(S.users) do
-    local txt = u.name
-    if u.rec then
-      txt = txt .. "  ● REC " .. M.fmt_pos(u.pos)
-    elseif u.play then
-      txt = txt .. "  ▶ " .. M.fmt_pos(u.pos)
-    else
-      txt = txt .. "  @ " .. M.fmt_pos(u.pos)
-    end
-    if u.sel and u.sel ~= "" then txt = txt .. " · " .. u.sel end
-    if u.app then txt = T("in_app", u.name) end
-    local tw = gfx.measurestr(txt) + 24
-    if cx + tw > W - pad then
-      cx = pad
-      y = y + 22
-    end
-    set_rgb(48, 48, 54)
-    gfx.rect(cx, y - 2, tw, 20, 1)
-    set_hex(u.color)
-    gfx.circle(cx + 9, y + 8, 4, 1)
-    set_rgb(u.rec and 255 or 225, u.rec and 140 or 225, u.rec and 140 or 230)
-    gfx.x, gfx.y = cx + 18, y + 1
-    gfx.drawstr(txt)
-    cx = cx + tw + 6
-  end
-  y = y + 26
-
-  -- inspektor
-  set_rgb(40, 40, 46)
-  gfx.rect(pad, y, W - 2 * pad, 24, 1)
-  gfx.setfont(2)
-  set_rgb(210, 210, 215)
-  gfx.x, gfx.y = pad + 8, y + 5
-  local it = inspector_text()
-  if gfx.measurestr(it) > W - 2 * pad - 16 then
-    while #it > 4 and gfx.measurestr(it .. "…") > W - 2 * pad - 16 do
-      it = it:sub(1, (utf8.offset(it, -1) or #it) - 1)
-    end
-    it = it .. "…"
-  end
-  gfx.drawstr(it)
-  y = y + 32
-
-  -- zakładki
-  local tx = pad
-  for i, key in ipairs(TABS) do
-    local name = T(key)
+  -- pasek stanu: transfery audio, nagrywanie, błędy
+  if nup + ndown + npend > 0 or #S.deferred > 0 then
     gfx.setfont(2)
-    local tw = gfx.measurestr(name) + 20
-    if button(tx, y, tw, 22, name, UI.tab == i) then
+    local msg = #S.deferred > 0 and T("recording_wait"):gsub("^%s+", "") or T("pending", nup, ndown, npend):gsub("^%s+", "")
+    local c = #S.deferred > 0 and C.rec or C.signal
+    local mw2 = gfx.measurestr(msg) + 34
+    col(mix(C.ink, c, 0.14))
+    rrect(pad, y, mw2, 22, 11)
+    -- kręciołek transferu
+    local ang = t * 6
+    col(c)
+    arc(pad + 13, y + 11, 5, ang, ang + 4.2, 1.5)
+    text_at(pad + 24, y + 4, msg, 2, c)
+    y = y + 30
+  end
+  if S.err then
+    gfx.setfont(2)
+    col(mix(C.ink, C.rec, 0.16))
+    rrect(pad, y, W - 2 * pad, 24, 8)
+    text_at(pad + 10, y + 5, ellipsize(S.err, W - 2 * pad - 20), 2, C.rec)
+    y = y + 32
+  end
+
+  -- osoby w sesji
+  local people = merged_users()
+  text_at(pad, y, T("in_session"), 3, C.paper2)
+  gfx.setfont(3)
+  if #people > 0 then text_at(pad + gfx.measurestr(T("in_session")) + 8, y + 1, tostring(#people), 2, C.dim) end
+  y = y + 24
+  if #people == 0 then
+    col(C.panel)
+    rrect(pad, y, W - 2 * pad, 46, 12)
+    text_at(pad + 16, y + 15, st == "on" and T("only_you") or T("nobody"), 2, C.dim)
+    y = y + 56
+  else
+    local cx = pad
+    local rowH = 0
+    for _, u in ipairs(people) do
+      gfx.setfont(3)
+      local estW = math.min(W - 2 * pad, 52 + gfx.measurestr(u.name) + 120)
+      if cx > pad and cx + estW > W - pad then
+        cx = pad
+        y = y + rowH + 8
+      end
+      local w, h = person_card(cx, y, u, W - pad - cx)
+      cx = cx + w + 8
+      rowH = h
+    end
+    y = y + rowH + 12
+  end
+
+  -- inspektor: kto dodał zaznaczony klip / ścieżkę
+  col(C.panel)
+  rrect(pad, y, W - 2 * pad, 30, 10)
+  col(C.amber)
+  gfx.circle(pad + 15, y + 15, 7, 0, 1)
+  text_at(pad + 13, y + 8, "i", 7, C.amber)
+  gfx.setfont(2)
+  text_at(pad + 30, y + 8, ellipsize(inspector_text(), W - 2 * pad - 42), 2, C.paper2)
+  y = y + 40
+
+  -- zakładki z przesuwającym się podświetleniem
+  local tabsW = W - 2 * pad
+  col(C.panel)
+  rrect(pad, y, tabsW, 30, 15)
+  gfx.setfont(2)
+  local tabW = {}
+  local sumW = 0
+  for i, key in ipairs(TABS) do
+    tabW[i] = gfx.measurestr(T(key)) + 26
+    sumW = sumW + tabW[i]
+  end
+  local tx = pad + 3
+  local selX, selW = tx, tabW[1]
+  for i, key in ipairs(TABS) do
+    if i == UI.tab then selX, selW = tx, tabW[i] end
+    tx = tx + tabW[i]
+  end
+  local ix, iw = anim("tabx", selX, 16), anim("tabw", selW, 16)
+  col(C.raise)
+  rrect(ix, y + 3, iw, 24, 12)
+  col(C.amber)
+  rrect(ix + iw / 2 - 8, y + 25, 16, 2, 1)
+  tx = pad + 3
+  for i, key in ipairs(TABS) do
+    local hover = inside(tx, y, tabW[i], 30)
+    local on = UI.tab == i
+    text_at(tx + 13, y + 7, T(key), 2, on and C.paper or (hover and C.paper2 or C.muted))
+    if hover and mouse.clicked then
       UI.tab = i
       UI.scroll = 0
     end
-    tx = tx + tw + 4
+    tx = tx + tabW[i]
   end
-  y = y + 28
+  y = y + 38
 
-  -- lista
-  local bottomH = 70
-  draw_feed(pad, y, W - 2 * pad, H - y - bottomH)
+  -- lista + powiadomienie
+  local bottomH = 86
+  local feedH = H - y - bottomH
+  draw_feed(pad, y, W - 2 * pad, feedH)
+  draw_toast(pad + 8, y + 8, W - 2 * pad - 16)
 
-  -- pole tekstowe
+  -- pole wiadomości
   local iy = H - bottomH + 10
-  set_rgb(20, 20, 23)
-  gfx.rect(pad, iy, W - 2 * pad, 26, 1)
-  set_rgb(80, 80, 90)
-  gfx.rect(pad, iy, W - 2 * pad, 26, 0)
+  local focus = anim("focus", UI.input ~= "" and 1 or 0, 12)
+  col(C.ink2)
+  rrect(pad, iy, W - 2 * pad, 32, 10)
+  col(mix(C.line, C.amber, focus))
+  gfx.roundrect(pad, iy, W - 2 * pad - 1, 31, 10, 1)
   gfx.setfont(1)
   local shown = UI.input
-  while #shown > 0 and gfx.measurestr(shown) > W - 2 * pad - 20 do
+  while #shown > 0 and gfx.measurestr(shown) > W - 2 * pad - 28 do
     shown = shown:sub((utf8.offset(shown, 2) or (#shown + 1)))
   end
-  gfx.x, gfx.y = pad + 8, iy + 5
   if UI.input == "" then
-    set_rgb(110, 110, 118)
-    gfx.drawstr(T("input_ph"))
+    text_at(pad + 12, iy + 8, T("input_ph"), 1, C.dim)
   else
-    set_rgb(235, 235, 240)
-    gfx.drawstr(shown)
+    text_at(pad + 12, iy + 8, shown, 1, C.paper)
   end
-  if math.floor(now() * 2) % 2 == 0 then
-    set_rgb(200, 200, 210)
-    local cxp = pad + 8 + (UI.input == "" and 0 or gfx.measurestr(shown))
-    gfx.line(cxp + 1, iy + 5, cxp + 1, iy + 21)
-  end
+  local blink = 0.5 + 0.5 * math.cos(t * 5)
+  col(C.amber, blink)
+  local cxp = pad + 12 + (UI.input == "" and 0 or gfx.measurestr(shown))
+  gfx.rect(cxp + 1, iy + 8, 2, 16, 1)
 
-  local by = iy + 32
-  if button(pad, by, 90, 22, T("send")) then send_input(false) end
+  -- przyciski
+  local by = iy + 40
+  gfx.setfont(5)
+  local sw = gfx.measurestr(T("send")) + 32
+  if button(pad, by, sw, 28, T("send"), "primary", "send") then send_input(false) end
   local selItem = r.GetSelectedMediaItem(0, 0)
   local cl
   if selItem then
@@ -2072,8 +2386,8 @@ local function draw()
     cl = T("comment_at", M.fmt_pos(r.GetCursorPosition()))
   end
   gfx.setfont(2)
-  local cw = gfx.measurestr(cl) + 24
-  if button(pad + 96, by, cw, 22, cl) then send_input(true) end
+  local cw = math.min(gfx.measurestr(cl) + 32, W - 2 * pad - sw - 8)
+  if button(pad + sw + 8, by, cw, 28, ellipsize(cl, cw - 24), "ghost", "comment") then send_input(true) end
 end
 
 local function update_mouse()
@@ -2124,12 +2438,17 @@ local function init()
   math.randomseed(math.floor(os.time() + (r.time_precise() * 1000) % 100000))
   reset_state()
   local x, y, w, h = (get_ext("wnd", "")):match("(-?%d+) (-?%d+) (%d+) (%d+)")
-  gfx.init("REAPER Multiplayer", tonumber(w) or 560, tonumber(h) or 640,
+  gfx.clear = 0x24140E -- tło okna (granat) zanim pierwsza klatka się narysuje
+  gfx.init("Sesja – REAPER Multiplayer", tonumber(w) or 600, tonumber(h) or 700,
     tonumber(get_ext("dock", "0")) or 0, tonumber(x) or 120, tonumber(y) or 120)
   local font = IS_WIN and "Segoe UI" or "Arial"
   gfx.setfont(1, font, 15)
   gfx.setfont(2, font, 13)
   gfx.setfont(3, font, 15, string.byte("b"))
+  gfx.setfont(4, font, 22, string.byte("b")) -- tytuł
+  gfx.setfont(5, font, 13, string.byte("b")) -- przycisk główny
+  gfx.setfont(6, font, 14, string.byte("b")) -- inicjał w dużym awatarze
+  gfx.setfont(7, font, 11, string.byte("b")) -- plakietki, mały awatar
   r.atexit(on_exit)
   if CFG.user == "" then
     if open_settings() then connect() end

@@ -294,16 +294,33 @@ function r.GetTakeName() return "" end
 
 -- gfx -------------------------------------------------------------------------
 local keyq = {}
-gfx = { w = 560, h = 640, mouse_cap = 0, mouse_x = 0, mouse_y = 0, mouse_wheel = 0, x = 0, y = 0 }
+-- gfx: zapisujemy polecenia rysowania ostatniej klatki (RMP_RECORD=1 -> ui_frame.json),
+-- żeby dało się obejrzeć wygląd okna moda bez REAPERa (tests/render_mod_ui.js)
+local FONTS, curFont, frame, lastFrame = {}, 1, {}, {}
+local function rec(op) frame[#frame + 1] = op end
+gfx = { w = 600, h = 700, mouse_cap = 0, mouse_x = -1, mouse_y = -1, mouse_wheel = 0, x = 0, y = 0, clear = 0 }
 function gfx.init() end
-function gfx.setfont() end
-function gfx.set() end
-function gfx.rect() end
-function gfx.circle() end
-function gfx.line() end
-function gfx.drawstr() end
-function gfx.update() end
-function gfx.measurestr(s) return #s * 7, 14 end
+function gfx.setfont(i, face, size, flags)
+  if face then FONTS[i] = { face = face, size = size, bold = flags ~= nil } end
+  curFont = i
+end
+function gfx.set(r, g, b, a) rec({ "set", r, g, b, a or 1 }) end
+function gfx.rect(x, y, w, h, f) rec({ "rect", x, y, w, h, f == nil and 1 or f }) end
+function gfx.circle(x, y, r, f) rec({ "circle", x, y, r, f or 0 }) end
+function gfx.roundrect(x, y, w, h, r) rec({ "roundrect", x, y, w, h, r }) end
+function gfx.triangle(...) rec({ "triangle", ... }) end
+function gfx.line(x1, y1, x2, y2) rec({ "line", x1, y1, x2, y2 }) end
+function gfx.measurestr(s)
+  local f = FONTS[curFont] or { size = 14 }
+  local n = utf8.len(s) or #s
+  return n * f.size * (f.bold and 0.56 or 0.52), f.size * 1.2
+end
+function gfx.drawstr(s)
+  local f = FONTS[curFont] or { size = 14 }
+  rec({ "text", gfx.x, gfx.y, s, f.size, f.bold and 1 or 0 })
+  gfx.x = gfx.x + gfx.measurestr(s)
+end
+function gfx.update() lastFrame = frame; frame = {} end
 function gfx.showmenu() return 0 end
 function gfx.dock() return 0, 0, 0, 0, 0 end
 local closed = false
@@ -443,6 +460,11 @@ for _, tr in ipairs(P.tracks) do
     }
   end
   out.tracks[#out.tracks + 1] = t
+end
+if os.getenv("RMP_RECORD") then
+  local fr = io.open(DIR .. "/ui_frame.json", "w")
+  fr:write(json.encode({ w = gfx.w, h = gfx.h, ops = lastFrame }))
+  fr:close()
 end
 local f = io.open(DIR .. "/result.json", "w")
 f:write(json.encode(out))

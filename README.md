@@ -25,6 +25,7 @@ Projekt składa się z trzech części:
 
 ### Menu
 
+- **Jak połączyć**: instrukcja krok po kroku, jak zagrać ze znajomymi przez Tailscale (i bez niego).
 - **Studio**: kto jest w sesji (nagrywa / odtwarza / gdzie stoi kursor), ścieżki z autorami, „Co się dzieje”,
   adresy Twojego serwera do skopiowania.
 - **Wiadomości**: czat (ten sam co w oknie moda w REAPERze).

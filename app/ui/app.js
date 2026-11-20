@@ -542,6 +542,7 @@ const VIEWS = [
   { id: "music", label: "nav_music", icon: "music" },
   { id: "comments", label: "nav_comments", icon: "comment" },
   "sep",
+  { id: "guide", label: "nav_guide", icon: "link" },
   { id: "reaper", label: "nav_reaper", icon: "reaper" },
   { id: "changes", label: "nav_changes", icon: "changes" },
   { id: "support", label: "nav_support", icon: "heart" },
@@ -555,7 +556,26 @@ function renderNav() {
       : `<button class="nav ${S.view === v.id ? "on" : ""}" data-view="${v.id}">${icon(v.icon)}<span>${t(v.label)}</span>${
           v.id === "chat" && S.unread ? `<span class="badge">${S.unread > 99 ? "99+" : S.unread}</span>` : ""
         }</button>`
-  ).join("");
+  ).join("") + `<span class="nav-ind" id="nav-ind" aria-hidden="true"></span>`;
+  moveNavIndicator(false);
+}
+
+/* bursztynowy znacznik aktywnej zakładki przesuwa się do nowej pozycji */
+let navIndY = null;
+function moveNavIndicator(animate = true) {
+  const ind = $("#nav-ind"), on = document.querySelector(".nav.on");
+  if (!ind || !on) return;
+  const y = on.offsetTop + 9, h = on.offsetHeight - 18;
+  if (navIndY !== null && animate === false) {
+    // po przebudowie listy startujemy z poprzedniej pozycji, żeby ruch był ciągły
+    ind.style.transition = "none";
+    ind.style.transform = `translateY(${navIndY}px)`;
+    ind.style.height = `${h}px`;
+    void ind.offsetWidth;
+    ind.style.transition = "";
+  }
+  requestAnimationFrame(() => { ind.style.transform = `translateY(${y}px)`; ind.style.height = `${h}px`; });
+  navIndY = y;
 }
 
 function renderConn() {
@@ -570,13 +590,16 @@ function go(view) {
   if (S.view === view) return;
   S.view = view;
   if (view === "chat") S.unread = 0;
-  renderNav();
+  document.querySelectorAll(".nav").forEach((b) => b.classList.toggle("on", b.dataset.view === view));
+  moveNavIndicator(true);
+  if (view === "chat") renderNav();
   renderView(true);
 }
 
 function renderView(animate) {
   const v = $("#view");
   v.innerHTML = (RENDER[S.view] || RENDER.studio)();
+  startLive();
   if (animate && !reduceMotion) {
     v.classList.remove("enter");
     void v.offsetWidth;
@@ -617,6 +640,7 @@ RENDER.studio = () => {
     <div class="head">
       <div>
         <h1 class="room-title">${esc(s.room)}</h1>
+        <canvas class="room-wave" id="room-wave" aria-hidden="true"></canvas>
         <div class="room-sub">
           <span class="pill"><span class="dot ${s.status}"></span>${statusLabel(s.status)}</span>
           <span>${esc(s.server)}</span>
@@ -640,7 +664,7 @@ RENDER.studio = () => {
 
 function studioEmpty() {
   return `
-    ${head(t("nav_studio"), t("studio_empty_lead"))}
+    ${head(t("nav_studio"), t("studio_empty_lead"), `<button class="btn ghost" data-view="guide">${icon("link")}${t("nav_guide")}</button>`)}
     ${S.host.running ? `<div style="margin-bottom:18px">${hostPanel()}</div>` : ""}
     <div class="choice-grid">
       <section class="panel choice">
@@ -670,21 +694,34 @@ function hostPanel() {
     <p class="muted">${t("host_share")}</p>
     ${a.map((x) => `<div class="addr"><code>${esc(x.url)}</code><small>${esc(t("net_" + x.kind))}</small>
       <button class="btn icon ghost" title="${esc(t("copy"))}" data-copy="${esc(x.url)}">${icon("copy")}</button></div>`).join("")}
-    <div class="row" style="margin-top:14px"><button class="btn danger" data-act="host-stop">${t("stop_server")}</button></div>
+    <div class="row" style="margin-top:14px"><button class="btn ghost" data-view="guide">${icon("link")}${t("nav_guide")}</button><button class="btn danger" data-act="host-stop">${t("stop_server")}</button></div>
   </section>`;
 }
 
+/* Ta sama osoba bywa naraz w REAPERze (mod) i w aplikacji – łączymy ją w jeden wpis. */
+function mergedUsers(users) {
+  const by = new Map();
+  for (const u of users || []) {
+    let e = by.get(u.name);
+    if (!e) by.set(u.name, (e = { name: u.name, color: u.color, reaper: false, app: false, pos: 0 }));
+    if (u.app) e.app = true;
+    else Object.assign(e, { reaper: true, pos: u.pos, play: u.play, rec: u.rec, sel: u.sel });
+  }
+  return [...by.values()];
+}
+
 function peopleHtml(s) {
-  const users = s.users || [];
+  const users = mergedUsers(s.users);
   if (!users.length) return `<div class="empty">${t("nobody_yet")}</div>`;
   return users.map((u) => {
-    const state = u.app ? `<span class="state">${t("in_app")}</span>`
+    const state = !u.reaper ? `<span class="state"></span>`
       : u.rec ? `<span class="state rec">${th("recording_at", { pos: fmtPos(u.pos) })}</span>`
-      : u.play ? `<span class="state">${icon("play", "width:12px;height:12px")}${fmtPos(u.pos)}</span>`
+      : u.play ? `<span class="state"><span class="eq" aria-hidden="true"><i></i><i></i><i></i></span>${fmtPos(u.pos)}</span>`
       : `<span class="state num">${fmtPos(u.pos)}</span>`;
-    const where = u.sel ? th("on_track", { name: u.sel }) : u.app ? "Sesja" : "REAPER";
-    return `<div class="person"><div class="avatar" style="background:${esc(u.color)}">${initial(u.name)}</div>
-      <div><b>${esc(u.name)}${u.name === s.me ? ` (${t("you")})` : ""}</b><small>${where}</small></div>${state}</div>`;
+    const badges = `${u.reaper ? `<span class="tag tag-reaper">REAPER</span>` : ""}${u.app ? `<span class="tag tag-app">Sesja</span>` : ""}`;
+    const where = u.sel ? th("on_track", { name: u.sel }) : u.reaper ? t("in_reaper") : t("in_app_long");
+    return `<div class="person ${u.rec ? "is-rec" : ""}"><div class="avatar" style="background:${esc(u.color)}">${initial(u.name)}</div>
+      <div><b>${esc(u.name)}${u.name === s.me ? ` (${t("you")})` : ""} ${badges}</b><small>${where}</small></div>${state}</div>`;
   }).join("");
 }
 
@@ -723,7 +760,8 @@ REFRESH.studio = () => {
   const s = S.session;
   if (!s || !$("#people")) return renderView(false);
   $("#people").innerHTML = peopleHtml(s);
-  $("#people-n").textContent = s.users.length ? String(s.users.length) : "";
+  const n = mergedUsers(s.users).length;
+  $("#people-n").textContent = n ? String(n) : "";
   $("#tracks").innerHTML = tracksHtml(s);
   $("#tracks-n").textContent = s.tracks.length ? String(s.tracks.length) : "";
   $("#feed").innerHTML = feedHtml(s);
@@ -731,6 +769,55 @@ REFRESH.studio = () => {
   if (pill) pill.innerHTML = `<span class="dot ${s.status}"></span>${statusLabel(s.status)}`;
 };
 AFTER.studio = () => S.session && REFRESH.studio();
+
+/* --- jak połączyć się ze znajomymi --- */
+const GUIDE_STEPS = [
+  { icon: "download", key: "g1", link: "https://tailscale.com/download" },
+  { icon: "users", key: "g2" },
+  { icon: "server", key: "g3", act: "studio" },
+  { icon: "copy", key: "g4" },
+  { icon: "link", key: "g5" },
+  { icon: "reaper", key: "g6" },
+];
+function guideDone() {
+  try { return JSON.parse(localStorage.getItem("sesja-guide") || "[]"); } catch { return []; }
+}
+RENDER.guide = () => {
+  const done = guideDone();
+  return `${head(t("guide_title"), t("guide_lead"))}
+    <section class="panel guide-hero">
+      <svg class="net" viewBox="0 0 640 170" aria-hidden="true">
+        <path id="net-a" class="wire" d="M120 112 C 220 112, 230 62, 320 62"/>
+        <path id="net-b" class="wire" d="M520 112 C 420 112, 410 62, 320 62"/>
+        <circle class="pkt pkt-a" r="4"><animateMotion dur="2.4s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="linear"><mpath href="#net-a"/></animateMotion></circle>
+        <circle class="pkt pkt-b" r="4"><animateMotion dur="2.4s" begin="1.2s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="linear"><mpath href="#net-b"/></animateMotion></circle>
+        <circle class="pkt pkt-c" r="3"><animateMotion dur="2.4s" begin="0.6s" repeatCount="indefinite" keyPoints="1;0" keyTimes="0;1" calcMode="linear"><mpath href="#net-a"/></animateMotion></circle>
+        <g class="node node-you" transform="translate(120 112)"><circle r="30"/><text y="5">${esc(t("g_you"))}</text></g>
+        <g class="node node-srv" transform="translate(320 62)"><circle r="34"/><text y="5">${esc(t("g_server"))}</text></g>
+        <g class="node node-friend" transform="translate(520 112)"><circle r="30"/><text y="5">${esc(t("g_friend"))}</text></g>
+        <text class="cap" x="120" y="160">${esc(t("city_a"))}</text>
+        <text class="cap" x="520" y="160">${esc(t("city_b"))}</text>
+      </svg>
+      <p class="muted">${t("guide_how")}</p>
+    </section>
+    <ol class="steps">
+      ${GUIDE_STEPS.map((st, i) => `<li class="step ${done.includes(st.key) ? "done" : ""}" style="--i:${i}">
+        <button class="step-check" data-step="${st.key}" aria-label="${esc(t("mark_done"))}">${icon("check")}</button>
+        <div class="step-body">
+          <b><span class="num">${i + 1}.</span> ${t(st.key + "_t")}</b>
+          <p>${t(st.key + "_d")}</p>
+          ${st.link ? `<button class="btn ghost" data-url="${st.link}">${icon("download")}${t("g1_btn")}</button>` : ""}
+          ${st.act ? `<button class="btn ghost" data-view="${st.act}">${t("go_studio")}</button>` : ""}
+        </div>
+        ${icon(st.icon, "width:22px;height:22px")}
+      </li>`).join("")}
+    </ol>
+    <div class="guide-grid">
+      <section class="panel"><h2>${t("g_lan_t")}</h2><p class="muted">${t("g_lan_d")}</p></section>
+      <section class="panel"><h2>${t("g_vps_t")}</h2><p class="muted">${t("g_vps_d")}</p></section>
+      <section class="panel"><h2>${t("g_fix_t")}</h2><div class="md"><ul><li>${t("g_fix_1")}</li><li>${t("g_fix_2")}</li><li>${t("g_fix_3")}</li></ul></div></section>
+    </div>`;
+};
 
 /* --- czat --- */
 RENDER.chat = () => {
@@ -1198,19 +1285,31 @@ const ACTIONS = {
 };
 
 document.addEventListener("click", (e) => {
-  const el = e.target.closest("[data-view],[data-act],[data-ob],[data-url],[data-copy],[data-play],[data-filter],[data-del-comment],canvas.wave");
+  const el = e.target.closest("[data-view],[data-act],[data-ob],[data-url],[data-copy],[data-play],[data-filter],[data-del-comment],[data-step],canvas.wave");
   if (!el) return;
   if (el.dataset.view) return go(el.dataset.view);
   if (el.dataset.act) return ACTIONS[el.dataset.act]?.(el);
   if (el.dataset.ob) return obAction(el.dataset.ob, el);
   if (el.dataset.url) { e.preventDefault(); return invoke("open_url", { url: el.dataset.url }).catch(fail); }
   if (el.dataset.copy) {
-    navigator.clipboard?.writeText(el.dataset.copy).then(() => toast({ title: t("copied"), text: el.dataset.copy }), fail);
+    navigator.clipboard?.writeText(el.dataset.copy).then(() => {
+      el.classList.add("copied");
+      el.innerHTML = icon("check");
+      setTimeout(() => { el.classList.remove("copied"); el.innerHTML = icon("copy"); }, 1400);
+      toast({ title: t("copied"), text: el.dataset.copy });
+    }, fail);
     return;
   }
   if (el.dataset.play) return togglePlay(el.dataset.play, el);
   if (el.dataset.filter !== undefined) { S.musicFilter = el.dataset.filter || null; $("#clips").dataset.ids = ""; return REFRESH.music(); }
   if (el.dataset.delComment) return invoke("delete_comment", { id: el.dataset.delComment }).catch(fail);
+  if (el.dataset.step) {
+    const done = new Set(guideDone());
+    done.has(el.dataset.step) ? done.delete(el.dataset.step) : done.add(el.dataset.step);
+    try { localStorage.setItem("sesja-guide", JSON.stringify([...done])); } catch {}
+    el.closest(".step").classList.toggle("done", done.has(el.dataset.step));
+    return;
+  }
   if (el.matches("canvas.wave") && S.audio.id === el.dataset.wave && S.audio.el.duration) {
     const r = el.getBoundingClientRect();
     S.audio.el.currentTime = ((e.clientX - r.left) / r.width) * S.audio.el.duration;
@@ -1261,10 +1360,79 @@ function onSession(sum) {
     const known = new Set(prev.comments.map((c) => c.id));
     for (const c of sum.comments) if (!known.has(c.id) && !c.mine) toast({ title: t("new_comment_from", { name: c.user }), text: c.text });
   }
+  if (prev) {
+    const fresh = sum.feed.filter((e) => !S.seenKeys.has(feedKey(e)) && !e.mine).length;
+    if (fresh) bumpLive(fresh);
+  }
   lastChatCount = chats.length;
   renderConn();
   refreshView();
+  startLive();
   for (const e of sum.feed) S.seenKeys.add(feedKey(e));
+}
+
+/* ------------------------------------------------------------------ żywy sygnał
+   Każda zmiana od innych osób „podbija” poziom. Napędza on falę pod nazwą pokoju
+   i miernik w pasku bocznym – w ciszy oba prawie się nie ruszają. */
+const LIVE = { level: 0, t: 0, raf: 0 };
+function bumpLive(n) { LIVE.level = Math.min(1, LIVE.level + 0.25 * n); startLive(); }
+function startLive() {
+  if (LIVE.raf || reduceMotion) return;
+  let last = performance.now();
+  const loop = (now) => {
+    const dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+    LIVE.t += dt;
+    LIVE.level = Math.max(0, LIVE.level - dt * 0.35);
+    drawRoomWave();
+    drawMeter();
+    const idle = LIVE.level <= 0 && !(S.session && S.session.status === "on");
+    LIVE.raf = idle || document.hidden ? 0 : requestAnimationFrame(loop);
+  };
+  LIVE.raf = requestAnimationFrame(loop);
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) startLive(); });
+function fitCanvas(cv) {
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return [ctx, w, h];
+}
+function drawRoomWave() {
+  const cv = $("#room-wave");
+  if (!cv || !cv.clientWidth) return;
+  const [ctx, w, h] = fitCanvas(cv);
+  const amp = (h / 2 - 2) * (0.12 + LIVE.level * 0.88);
+  const grad = ctx.createLinearGradient(0, 0, w, 0);
+  grad.addColorStop(0, "rgba(95,201,181,0.9)");
+  grad.addColorStop(0.5, "rgba(243,167,59,0.95)");
+  grad.addColorStop(1, "rgba(234,227,210,0.5)");
+  ctx.strokeStyle = grad;
+  ctx.lineWidth = 2;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  for (let x = 0; x <= w; x += 2) {
+    const f = x / w;
+    const env = Math.sin(Math.PI * f);
+    const y = h / 2 + Math.sin(f * 18 - LIVE.t * 3.2) * amp * env * (0.7 + 0.3 * Math.sin(f * 5 + LIVE.t));
+    x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+function drawMeter() {
+  const cv = $("#meter");
+  if (!cv || !cv.clientWidth) return;
+  const [ctx, w, h] = fitCanvas(cv);
+  const bars = 14, gap = 3, bw = (w - gap * (bars - 1)) / bars;
+  for (let i = 0; i < bars; i++) {
+    const wob = 0.5 + 0.5 * Math.sin(LIVE.t * (3 + i * 0.7) + i);
+    const lvl = (S.session?.status === "on" ? 0.12 : 0.04) + LIVE.level * (0.5 + 0.5 * wob);
+    const lit = i / bars < lvl;
+    ctx.fillStyle = !lit ? "rgba(234,227,210,0.08)" : i >= bars - 2 ? "#f0524f" : i >= bars - 5 ? "#f3a73b" : "#5fc9b5";
+    ctx.fillRect(i * (bw + gap), 0, bw, h);
+  }
 }
 
 /* ------------------------------------------------------------------ start */

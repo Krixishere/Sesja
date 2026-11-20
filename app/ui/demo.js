@@ -27,6 +27,8 @@
       { cid: "a", name: "Ania", color: "#f58231", pos: 72.4, play: false, rec: false, sel: "Wokal główny", app: false },
       { cid: "b", name: "Bartek", color: "#46f0f0", pos: 41.2, play: false, rec: true, sel: "Gitara akustyczna", app: false },
       { cid: "c", name: "Kuba", color: "#bcf60c", pos: 12.0, play: true, rec: false, sel: "", app: false },
+      { cid: "a2", name: "Ania", color: "#f58231", pos: 0, play: false, rec: false, sel: "", app: true },
+      { cid: "d", name: "Ola", color: "#e6beff", pos: 0, play: false, rec: false, sel: "", app: true },
     ],
     tracks: [
       tr("t1", "Wokal główny", "Ania", "Ania"), tr("t2", "Chórki", "Ania", "Kuba"),

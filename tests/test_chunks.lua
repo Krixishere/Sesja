@@ -114,6 +114,11 @@ check(tk[1] == "NAME" and tk[2] == "Wokal główny" and tk[3] == "1" and tk[4] =
 check(M.id_size("vocal~123456~0badf00d.wav") == 123456, "id_size")
 check(M.fmt_pos(3725) == "1:02:05" and M.fmt_pos(65) == "1:05", "fmt_pos")
 
+-- UTF-16LE dla ukrytego uruchamiania curl na Windows
+local u = M.utf16le("aą💬")
+check(u == "\255\254" .. "a\0" .. "\5\1" .. "\61\216\172\220", "utf16le: BOM, ą i para surogatów dla emoji")
+check(M.utf16le("C:\\Użytkownicy\\x") :sub(1, 2) == "\255\254", "utf16le: ścieżka z polskimi znakami")
+
 -- file_id
 local tmp = os.tmpname()
 local f = io.open(tmp, "wb"); f:write(string.rep("abc", 50000)); f:close()
