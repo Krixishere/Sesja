@@ -3,6 +3,12 @@
 Nagłówki wersji aplikacji mają postać `## Sesja X.Y.Z` – sekcja trafia automatycznie
 do opisu wydania na GitHubie.
 
+## Sesja 1.1.1
+
+- W Studiu nad nazwą pokoju jest podpis „Pokój” – nie myli się już z nazwą zakładki.
+- Błąd połączenia pokazuje się od razu (wcześniej znikał, gdy połączenie padło
+  po otwarciu widoku) i podpowiada, co sprawdzić.
+
 ## Sesja 1.1.0
 
 - Koniec z migającym oknem konsoli na Windows: mod w REAPERze uruchamia połączenia

@@ -479,3 +479,9 @@ p { margin: 0; }
 .step.done b { color: var(--paper-2); }
 .guide-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
 @media (max-width: 1000px) { .guide-grid { grid-template-columns: 1fr; } }
+
+.room-label { color: var(--muted); font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+.notice-error { background: rgba(240, 82, 79, 0.08); margin-bottom: 18px; }
+.notice-error > svg { color: var(--rec); }
+.notice-error b { display: block; font-weight: 600; }
+.notice-error p { color: var(--paper-2); margin: 4px 0 10px; }

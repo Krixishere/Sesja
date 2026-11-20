@@ -59,6 +59,10 @@
     colors,
   };
   session.comments = session.feed.filter((e) => e.kind === "comment");
+  if (params.get("err")) {
+    Object.assign(session, { status: "error", room: "Studio", server: "http://100.122.223.121:8765", users: [], tracks: [], items: [], feed: [], comments: [],
+      error: "Nie można połączyć z http://100.122.223.121:8765: serwer nie odpowiada (czy jest uruchomiony?)" });
+  }
   const host = { running: params.get("host") === "1", port: 8765, addresses: [
     { url: "http://100.101.102.103:8765", kind: "tailscale" }, { url: "http://192.168.1.24:8765", kind: "lan" }, { url: "http://127.0.0.1:8765", kind: "local" }] };
   let connected = false;

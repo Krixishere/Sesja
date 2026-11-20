@@ -639,6 +639,7 @@ RENDER.studio = () => {
   return `
     <div class="head">
       <div>
+        <div class="room-label">${t("room")}</div>
         <h1 class="room-title">${esc(s.room)}</h1>
         <canvas class="room-wave" id="room-wave" aria-hidden="true"></canvas>
         <div class="room-sub">
@@ -651,7 +652,7 @@ RENDER.studio = () => {
         <button class="btn ghost" data-act="disconnect">${t("disconnect")}</button>
       </div>
     </div>
-    ${s.error ? `<div class="notice" style="margin-bottom:18px">${icon("alert")}<span>${esc(s.error)}</span></div>` : ""}
+    <div id="studio-error">${errorNotice(s)}</div>
     <div class="studio-grid">
       <div class="stack">
         <section class="panel"><h2>${t("in_session")} <span class="muted" id="people-n"></span></h2><div class="people" id="people"></div></section>
@@ -756,9 +757,23 @@ function feedHtml(s) {
   }).join("");
 }
 
+/* błąd połączenia z podpowiedzią, co sprawdzić */
+function errorNotice(s) {
+  if (!s.error || s.status === "on") return "";
+  return `<div class="notice notice-error">${icon("alert")}<div><b>${esc(s.error)}</b>
+    <p>${t("conn_help")}</p>
+    <div class="row"><button class="btn ghost" data-view="guide">${icon("link")}${t("nav_guide")}</button>
+    <button class="btn ghost" data-view="settings">${t("nav_settings")}</button></div></div></div>`;
+}
+
 REFRESH.studio = () => {
   const s = S.session;
   if (!s || !$("#people")) return renderView(false);
+  const errBox = $("#studio-error"), errHtml = errorNotice(s);
+  if (errBox && errBox.dataset.err !== (s.error || "") + s.status) {
+    errBox.dataset.err = (s.error || "") + s.status;
+    errBox.innerHTML = errHtml;
+  }
   $("#people").innerHTML = peopleHtml(s);
   const n = mergedUsers(s.users).length;
   $("#people-n").textContent = n ? String(n) : "";
