@@ -1,6 +1,6 @@
 [package]
 name = "sesja"
-version = "1.5.0"
+version = "1.5.1"
 description = "Sesja – wspólne nagrywanie w REAPERze przez internet"
 authors = ["krixishere"]
 license = "MIT"
@@ -14,6 +14,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-deep-link = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 ureq = { version = "2", features = ["json"] }
@@ -21,6 +22,9 @@ tiny_http = "0.12"
 dirs = "5"
 md-5 = "0.10"
 if-addrs = "0.13"
+
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

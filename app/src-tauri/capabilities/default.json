@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Uprawnienia głównego okna",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "deep-link:default"]
 }

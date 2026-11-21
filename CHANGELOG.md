@@ -3,6 +3,14 @@
 Nagłówki wersji aplikacji mają postać `## Sesja X.Y.Z` – sekcja trafia automatycznie
 do opisu wydania na GitHubie.
 
+## Sesja 1.5.1
+
+- **„Otwórz w Sesji” na stronie zaproszenia**: kliknięcie otwiera aplikację (albo wyciąga ją
+  na wierzch, jeśli już działa) od razu z wpisanym linkiem do sesji. Zostaje wpisać hasło i kliknąć
+  „Dołącz”. Sesja bez hasła dołącza sama.
+- Jeśli jesteś w innej sesji, aplikacja pyta, czy się przełączyć.
+- Gdy aplikacji nie ma, strona podpowiada, żeby ją pobrać.
+
 ## Sesja 1.5.0
 
 - **Utwórz sesję jednym kliknięciem**: wpisujesz nazwę i hasło, a aplikacja zakłada sesję na wspólnym

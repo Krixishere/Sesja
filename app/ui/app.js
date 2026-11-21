@@ -508,7 +508,8 @@ async function obAction(act, el) {
       OB.anim.stop();
       $("#onboard").hidden = true;
       startApp();
-      if (S.cfg.nick && S.cfg.server && S.cfg.room) connect().then(() => renderView(false)).catch(() => {});
+      if (S.pendingInvite) openInvite(S.pendingInvite);
+      else if (S.cfg.nick && S.cfg.server && S.cfg.room) connect().then(() => renderView(false)).catch(() => {});
       return;
     }
   }
@@ -658,6 +659,50 @@ function parseLink(raw) {
 const roomTitle = (s) => (S.cfg.room_name && S.cfg.room === s.room ? S.cfg.room_name : s.room);
 const inviteLink = () => `${S.cfg.server.replace(/\/+$/, "")}/s/${S.cfg.room}`;
 const safePass = (v) => String(v || "").replace(/[^A-Za-z0-9._-]/g, "");
+
+/* sesja://join/<host>/<kod> (przycisk „Otwórz w Sesji” na stronie zaproszenia) -> link https */
+function deepToLink(u) {
+  const m = String(u || "").match(/^sesja:\/\/join\/([A-Za-z0-9.-]+(?::\d+)?)\/([A-Za-z0-9]{4,40})/);
+  if (!m) return null;
+  const http = /^(localhost|127\.0\.0\.1)(:|$)/.test(m[1]) ? "http" : "https";
+  return `${http}://${m[1].toLowerCase()}/s/${m[2].toLowerCase()}`;
+}
+
+/* Wypełnia „Dołącz przez link”. Sesja bez hasła -> od razu dołącza. */
+async function openInvite(u) {
+  const link = deepToLink(u);
+  if (!link) return;
+  if (!S.cfg?.onboarded) { S.pendingInvite = u; return; }
+  const l = parseLink(link);
+  if (S.session && S.cfg.server === l.server && S.cfg.room === l.room) { go("studio"); return; }
+  const fill = async () => {
+    S.pendingInvite = null;
+    go("studio");
+    let info = null;
+    try { info = await invoke("room_info", { server: l.server, room: l.room }); } catch {}
+    if (info?.exists === false) return toast({ title: t("no_such_session"), text: link });
+    if (info && info.has_password === false && S.cfg.nick) {
+      try { return await enterSession({ server: l.server, room: l.room, password: "", room_name: info.name || l.room }); } catch (e) { return fail(e); }
+    }
+    const form = $("#link-form");
+    if (!form) return;
+    form.link.value = link;
+    form.classList.remove("invited"); void form.offsetWidth; form.classList.add("invited");
+    form.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+    form.password.focus();
+    toast({ title: info?.name ? th("invite_to", { name: esc(info.name) }) : t("link_title"), text: t("invite_enter_pass") });
+  };
+  if (S.session) {
+    toast({
+      title: info_title(l), text: t("invite_switch"), timeout: 15000,
+      actions: [
+        { label: t("cancel"), fn: (close) => close() },
+        { label: t("invite_switch_btn"), primary: true, fn: async (close) => { close(); await ACTIONS.disconnect(); fill(); } },
+      ],
+    });
+  } else fill();
+}
+const info_title = (l) => th("invite_to", { name: esc(l.room) });
 
 function invitePanel() {
   if (!S.cfg.room_name) return "";
@@ -1728,6 +1773,9 @@ async function boot() {
   if (!cfg.lang) S.cfg = await invoke("save_config", { cfg: { ...cfg, lang: lang() } });
   applyStaticTexts();
   await listen("session", onSession);
+  await listen("deep-link", (u) => { invoke("take_deep_link").catch(() => {}); openInvite(u); });
+  const startLink = await invoke("take_deep_link").catch(() => null);
+  if (startLink) S.pendingInvite = startLink;
   await listen("cloud-progress", (p) => {
     CLOUD.steps[p.step] = { state: p.state, detail: p.detail };
     const box = $("#cloud-progress");
@@ -1741,7 +1789,8 @@ async function boot() {
     obShow();
   } else {
     startApp();
-    if (S.cfg.nick && S.cfg.server && S.cfg.room) connect().catch(() => {});
+    if (S.pendingInvite) openInvite(S.pendingInvite);
+    else if (S.cfg.nick && S.cfg.server && S.cfg.room) connect().catch(() => {});
   }
   if (S.cfg.auto_update) setTimeout(() => checkUpdates(false), 2500);
   checkFirewall();

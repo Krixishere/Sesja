@@ -23,6 +23,26 @@ struct AppState {
     config: Mutex<Config>,
     session: Mutex<Option<session::Session>>,
     host: Mutex<Option<server::HostServer>>,
+    /// Link sesja://… z przeglądarki, który czeka, aż interfejs go odbierze.
+    pending_link: Mutex<Option<String>>,
+}
+
+/// Link „Otwórz w Sesji” ze strony zaproszenia: zapamiętaj, wyślij do interfejsu i pokaż okno.
+fn handle_links<I: IntoIterator<Item = String>>(app: &AppHandle, urls: I) {
+    use tauri::Emitter;
+    let Some(link) = urls.into_iter().find(|u| u.starts_with("sesja://")) else { return };
+    *app.state::<AppState>().pending_link.lock().unwrap() = Some(link.clone());
+    let _ = app.emit("deep-link", link);
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
+#[tauri::command]
+fn take_deep_link(st: State<AppState>) -> Option<String> {
+    st.pending_link.lock().unwrap().take()
 }
 
 // ---------------------------------------------------------------- ustawienia
@@ -405,7 +425,14 @@ fn main() {
     if args.first().map(|a| a == "--serve").unwrap_or(false) {
         headless_server(&args[1..]);
     }
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // druga kopia aplikacji (np. kliknięty link sesja://) przekazuje link pierwszej i się zamyka
+    #[cfg(any(windows, target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+        handle_links(app, argv);
+    }));
+    builder
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage({
@@ -414,6 +441,17 @@ fn main() {
             AppState { config: Mutex::new(cfg), ..Default::default() }
         })
         .setup(|app| {
+            use tauri_plugin_deep_link::DeepLinkExt;
+            // Linux (AppImage) i uruchomienia deweloperskie: zarejestruj sesja:// przy starcie
+            #[cfg(any(windows, target_os = "linux"))]
+            let _ = app.deep_link().register_all();
+            let handle = app.handle().clone();
+            app.deep_link().on_open_url(move |e| {
+                handle_links(&handle, e.urls().into_iter().map(|u| u.to_string()));
+            });
+            if let Ok(Some(urls)) = app.deep_link().get_current() {
+                handle_links(app.handle(), urls.into_iter().map(|u| u.to_string()));
+            }
             let st = app.state::<AppState>();
             let cfg = st.config.lock().unwrap().clone();
             if cfg.host_on_start {
@@ -443,6 +481,7 @@ fn main() {
             room_create,
             room_info,
             public_server,
+            take_deep_link,
             session_disconnect,
             session_state,
             send_chat,

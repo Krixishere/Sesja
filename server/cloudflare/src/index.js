@@ -8,7 +8,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 const SAFE = /^[A-Za-z0-9._~-]{1,200}$/;
 const MAX_OPS_PER_RESPONSE = 400;
 const MAX_LOG = 5000; // ile operacji trzymamy (starsze -> klient robi pełną synchronizację)
@@ -64,6 +64,8 @@ function page(title, body) {
 .k{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#f3a73b}h1{margin:6px 0 4px;font-size:34px;line-height:1.1;letter-spacing:-.02em}
 p{color:rgba(234,227,210,.72)}code{display:block;margin:14px 0;padding:12px 14px;border-radius:12px;background:#0a0f1c;border:1px solid rgba(234,227,210,.1);font:14px ui-monospace,monospace;word-break:break-all}
 ol{padding-left:20px;color:rgba(234,227,210,.85)}li{margin:6px 0}a.b{display:inline-block;margin-top:14px;padding:12px 18px;border-radius:12px;background:#f3a73b;color:#1a1408;font-weight:600;text-decoration:none}
+.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.row a.b{margin-top:0}a.b.g{background:transparent;color:#eae3d2;box-shadow:inset 0 0 0 1px rgba(234,227,210,.22)}
+.hint{display:none;margin-top:14px;font-size:14px;color:#f3a73b}.hint.on{display:block;animation:in .5s}
 .bars{display:flex;gap:4px;height:26px;align-items:flex-end;margin-bottom:14px}.bars i{width:5px;border-radius:3px;background:#f3a73b;animation:b 1.1s ease-in-out infinite}
 .bars i:nth-child(2){animation-delay:-.2s;background:#5fc9b5}.bars i:nth-child(3){animation-delay:-.4s}.bars i:nth-child(4){animation-delay:-.6s;background:#f0524f}.bars i:nth-child(5){animation-delay:-.8s}
 @keyframes b{0%,100%{height:30%}50%{height:100%}}@media (prefers-reduced-motion:reduce){*{animation:none!important}}
@@ -105,10 +107,14 @@ export default {
     if (inv && request.method === "GET") {
       const info = await (await env.ROOMS.get(env.ROOMS.idFromName(inv[1])).fetch("https://room/api/room")).json();
       if (!info.exists) return page("Sesja", `<div class="k">Sesja</div><h1>Nie ma takiej sesji</h1><p>Link jest niepełny albo sesja została usunięta. Poproś o nowy link.</p>`);
+      const deep = `sesja://join/${url.host}/${inv[1]}`;
       return page(`Sesja – ${info.name}`, `<div class="k">Zaproszenie do sesji</div><h1>${htmlEsc(info.name)}</h1>
-        <p>Ktoś zaprasza Cię do wspólnego nagrywania w REAPERze.</p><ol><li>Zainstaluj aplikację <b>Sesja</b> (Windows, macOS, Linux).</li>
-        <li>W Studiu wybierz <b>Dołącz przez link</b> i wklej ten adres:</li></ol><code>${htmlEsc(url.origin + url.pathname)}</code>
-        ${info.has_password ? "<p>Hasło dostaniesz od osoby, która Cię zaprosiła.</p>" : ""}<a class="b" href="${DOWNLOAD}">Pobierz Sesję</a>`);
+        <p>Ktoś zaprasza Cię do wspólnego nagrywania w REAPERze.</p>
+        <div class="row"><a class="b" id="open" href="${htmlEsc(deep)}">Otwórz w Sesji</a><a class="b g" href="${DOWNLOAD}">Pobierz Sesję</a></div>
+        <p class="hint" id="hint">Nic się nie otworzyło? Zainstaluj Sesję (Windows, macOS, Linux) i kliknij jeszcze raz.</p>
+        <p>Albo ręcznie: w Studiu wybierz <b>Dołącz przez link</b> i wklej:</p><code>${htmlEsc(url.origin + url.pathname)}</code>
+        ${info.has_password ? "<p>Hasło dostaniesz od osoby, która Cię zaprosiła.</p>" : ""}
+        <script>document.getElementById("open").addEventListener("click",function(){var h=document.getElementById("hint");var t=setTimeout(function(){if(!document.hidden)h.classList.add("on")},1800);window.addEventListener("blur",function(){clearTimeout(t)},{once:true})});</script>`);
     }
     if (env.PASSWORD && request.headers.get("X-RMP-Key") !== env.PASSWORD && url.pathname !== "/api/room") {
       return err(403, "bad_password", "Wrong server password");

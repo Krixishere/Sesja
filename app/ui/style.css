@@ -622,3 +622,10 @@ details.more[open] > .choice-grid { animation: more-in .4s cubic-bezier(.2,.8,.2
   background: var(--panel-2); color: var(--paper-2); font-size: 14px; }
 .ob-hint svg { width: 20px; height: 20px; flex: none; color: var(--amber); margin-top: 2px; }
 @media (prefers-reduced-motion: reduce) { details.more[open] > .choice-grid, .invite { animation: none; } }
+#link-form.invited { animation: invited 1.6s cubic-bezier(.2,.8,.2,1); border-color: rgba(95,201,181,.5); }
+@keyframes invited {
+  0% { box-shadow: 0 0 0 0 rgba(95,201,181,.0); transform: scale(.985); }
+  25% { box-shadow: 0 0 0 6px rgba(95,201,181,.25); transform: scale(1); }
+  100% { box-shadow: 0 0 0 0 rgba(95,201,181,0); }
+}
+@media (prefers-reduced-motion: reduce) { #link-form.invited { animation: none; } }
