@@ -471,7 +471,7 @@ fn call(req: ureq::Request, body: Option<&Value>, conn: &Conn) -> Result<Value, 
 
 fn server_kind(v: &Value) -> &'static str {
     match v["code"].as_str() {
-        Some("bad_password") | Some("bad_room") => "auth",
+        Some("bad_password") | Some("bad_room") | Some("no_room") => "auth",
         _ => "server",
     }
 }
@@ -485,6 +485,33 @@ fn short_err(s: &str) -> (String, &'static str) {
         (t("timeout"), "timeout")
     } else {
         (s.chars().take(120).collect(), "other")
+    }
+}
+
+/// Zakłada nową sesję na serwerze (nazwa + hasło) i zwraca {room, name, link, server}.
+pub fn create_room(server: &str, name: &str, password: &str) -> Result<Value, String> {
+    let server = server.trim_end_matches('/');
+    match agent().post(&format!("{server}/api/rooms")).send_json(json!({ "name": name, "password": password })) {
+        Ok(r) => {
+            let v: Value = r.into_json().map_err(|e| tf("bad_response", &[&e]))?;
+            if v["ok"].as_bool() == Some(true) && v["room"].is_string() { Ok(v) } else { Err(t("srv_no_rooms")) }
+        }
+        Err(ureq::Error::Status(code, r)) => {
+            let v: Value = r.into_json().unwrap_or(json!({}));
+            if code == 404 || code == 405 || v["code"].is_null() { Err(t("srv_no_rooms")) } else { Err(i18n::server_error(&v)) }
+        }
+        Err(e) => Err(tf("cant_connect", &[&server, &short_err(&e.to_string()).0])),
+    }
+}
+
+/// Informacje o sesji z linku: {exists, name, has_password}. Starsze serwery -> exists: null.
+pub fn room_info(server: &str, room: &str) -> Result<Value, String> {
+    let conn = Conn { server: server.trim_end_matches('/').to_string(), room: room.to_string(), user: String::new(), password: String::new() };
+    let req = agent().get(&url(&conn, &format!("/api/room?room={room}")));
+    match call(req, None, &conn) {
+        Ok(v) => Ok(v),
+        Err((_, "server")) => Ok(json!({ "ok": true, "exists": null, "name": null, "has_password": null })),
+        Err((msg, _)) => Err(msg),
     }
 }
 

@@ -3,6 +3,19 @@
 Nagłówki wersji aplikacji mają postać `## Sesja X.Y.Z` – sekcja trafia automatycznie
 do opisu wydania na GitHubie.
 
+## Sesja 1.5.0
+
+- **Utwórz sesję jednym kliknięciem**: wpisujesz nazwę i hasło, a aplikacja zakłada sesję na wspólnym
+  serwerze Sesji (`sesja.krixishere.org`) i daje link do wysłania znajomym. Bez adresów IP, portów,
+  Tailscale i zapory.
+- **Dołącz przez link**: znajomy wkleja link, wpisuje hasło i jest w środku. Link otwarty w przeglądarce
+  pokazuje stronę zaproszenia z instrukcją i przyciskiem pobrania.
+- W Studiu widać nazwę sesji i panel „Zaproś znajomych” z linkiem i hasłem do skopiowania.
+- Mod w REAPERze (1.5.0) sam przełącza się na sesję wybraną w aplikacji – bez restartu REAPERa.
+- Każda sesja ma własne hasło (zapisane na serwerze jako skrót SHA-256 z solą).
+- Ekran powitalny pyta już tylko o nick. Własny serwer, hostowanie u siebie i ręczny adres są
+  w „Więcej opcji”.
+
 ## Sesja 1.4.0
 
 - „Utwórz serwer w chmurze” prosto z aplikacji: wklejasz token Cloudflare, a Sesja sama wgrywa
@@ -77,6 +90,10 @@ do opisu wydania na GitHubie.
 - Studio: kto jest online, kto nagrywa i co kto dodał do projektu.
 - Czat, komentarze do klipów i lista wszystkich nagrań z odsłuchem i podglądem fali.
 - Automatyczne aktualizacje i ten dziennik zmian.
+
+## Mod 1.5.0
+
+- Automatyczne przełączanie na sesję wybraną w aplikacji Sesja (plik `session.txt` obok skryptu).
 
 ## Mod 1.4.0
 

@@ -9,7 +9,7 @@
   const cfg = {
     onboarded: params.get("demo") !== "onboard", nick: params.get("off") ? "" : "Ania", server: "http://100.101.102.103:8765", room: "nowy_singiel",
     password: "", reaper_exe: null, reaper_resource: null, auto_update: false, autostart_script: true,
-    host_port: 8765, host_password: "", host_on_start: false, lang: params.get("lang") || "", cloud_url: params.get("cloud") || "",
+    host_port: 8765, host_password: "", host_on_start: false, lang: params.get("lang") || "", cloud_url: params.get("cloud") || "", room_name: params.get("named") ? "Nowy singiel" : "",
   };
   const reaper = {
     found: params.get("reaper") !== "missing", exe: "C:\\Program Files\\REAPER (x64)\\reaper.exe",
@@ -89,7 +89,10 @@
     firewall_allow: ({ port }) => new Promise((r) => setTimeout(() => r({ applicable: true, allowed: true, port }), 900)),
     host_start: () => (host.running = true, host),
     host_stop: () => (host.running = false, null),
-    session_connect: () => { connected = true; setTimeout(() => emit("session", session), 50); },
+    public_server: () => "https://sesja.krixishere.org",
+    room_create: ({ name }) => new Promise((r) => setTimeout(() => r({ ok: true, room: "k7m2xq9pwd", name, link: "https://sesja.krixishere.org/s/k7m2xq9pwd", server: "https://sesja.krixishere.org" }), 700)),
+    room_info: ({ room }) => ({ ok: true, exists: room !== "zzzzzz", name: "Nowy singiel", has_password: true }),
+    session_connect: () => { connected = true; session.room = cfg.room; session.server = cfg.server; setTimeout(() => emit("session", session), 50); },
     session_disconnect: () => { connected = false; },
     session_state: () => (connected ? session : null),
     send_chat: ({ text }) => { session.feed.push(ev("chat", "Ania", text, 0)); setTimeout(() => emit("session", { ...session, feed: [...session.feed] }), 200); },

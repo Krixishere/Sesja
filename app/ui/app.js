@@ -380,49 +380,21 @@ function obSearchResult(body, foot, info) {
 }
 
 function obProfile(body, foot) {
-  // zachowaj to, co użytkownik już wpisał, przy przełączaniu trybu
-  const keep = (id, key) => { const el = document.getElementById(id); if (el) OB.draft[key] = el.value; };
-  keep("ob-nick", "nick"); keep("ob-room", "room"); keep("ob-server", "server"); keep("ob-pass", "pass");
-  const c = { ...S.cfg };
-  for (const k of ["nick", "room", "server"]) if (OB.draft[k] !== undefined) c[k] = OB.draft[k];
-  const pass = OB.draft.pass !== undefined ? OB.draft.pass : OB.mode === "host" ? c.host_password : c.password;
+  const nick = OB.draft.nick !== undefined ? OB.draft.nick : S.cfg.nick;
   body.innerHTML = `<h2>${t("ob_profile_title")}</h2>
-    <label class="field"><span>${t("nick")}</span><input class="input" id="ob-nick" maxlength="40" placeholder="${esc(t("nick_ph"))}" value="${esc(c.nick)}"></label>
-    <div class="modes">
-      <button class="mode ${OB.mode === "host" ? "on" : ""}" data-ob="mode-host"><b>${t("mode_host")}</b><small>${t("mode_host_text")}</small></button>
-      <button class="mode ${OB.mode === "join" ? "on" : ""}" data-ob="mode-join"><b>${t("mode_join")}</b><small>${t("mode_join_text")}</small></button>
-    </div>
-    ${OB.mode === "join" ? `<label class="field"><span>${t("server_addr")}</span><input class="input" id="ob-server" placeholder="https://sesja.twojadomena.pl" value="${esc(c.server)}"><small>${t("server_addr_hint")}</small></label>` : ""}
-    <div class="form-grid">
-      <label class="field"><span>${t("room")}</span><input class="input" id="ob-room" placeholder="${esc(t("room_ph"))}" value="${esc(c.room)}"><small>${t("room_hint")}</small></label>
-      <label class="field"><span>${t("password_opt")}</span><input class="input" id="ob-pass" type="password" value="${esc(pass)}"></label>
-    </div>`;
+    <label class="field"><span>${t("nick")}</span><input class="input" id="ob-nick" maxlength="40" placeholder="${esc(t("nick_ph"))}" value="${esc(nick)}"><small>${t("need_nick_text")}</small></label>
+    <div class="ob-hint">${icon("link")}<span><b>${t("create_title")}</b> ${t("or")} <b>${t("link_title").toLowerCase()}</b> – ${t("create_text")}</span></div>`;
   foot.innerHTML = `<button class="btn ghost" data-ob="back">${t("back")}</button><button class="btn primary big" data-ob="profile-save">${t("next")}</button>`;
   setTimeout(() => $("#ob-nick")?.focus(), 50);
 }
 
 async function obProfileSave() {
   const nick = $("#ob-nick").value.trim();
-  const room = $("#ob-room").value.trim();
-  const pass = $("#ob-pass").value.trim();
+  OB.draft.nick = nick;
   if (!nick) return toast({ title: t("need_nick"), text: t("need_nick_text") });
-  if (!room) return toast({ title: t("need_room"), text: t("need_room_text") });
-  const cfg = { ...S.cfg, nick, room };
-  if (OB.mode === "host") {
-    cfg.host_password = pass;
-    cfg.password = pass;
-    cfg.server = `http://127.0.0.1:${cfg.host_port || 8765}`;
-    cfg.host_on_start = true;
-  } else {
-    const server = $("#ob-server").value.trim();
-    if (!server) return toast({ title: t("need_server"), text: t("server_addr_hint") });
-    cfg.server = server;
-    cfg.password = pass;
-  }
-  try {
-    S.cfg = await invoke("save_config", { cfg });
-    if (OB.mode === "host") { S.host = await invoke("host_start", { port: S.cfg.host_port || 8765, password: S.cfg.host_password }); checkFirewall(); }
-  } catch (e) { return fail(e); }
+  const cfg = { ...S.cfg, nick };
+  if (!cfg.server || /127\.0\.0\.1|localhost/.test(cfg.server)) cfg.server = S.publicServer;
+  try { S.cfg = await invoke("save_config", { cfg }); } catch (e) { return fail(e); }
   OB.step = OB.detect?.found && OB.detect?.resource ? 3 : 4;
   obRender();
 }
@@ -588,7 +560,7 @@ function moveNavIndicator(animate = true) {
 function renderConn() {
   const s = S.session;
   const st = s ? s.status : "off";
-  const sub = s ? th("room_n", { room: s.room }) : S.host.running ? t("server_running") : t("not_in_session");
+  const sub = s ? th("room_n", { room: esc(roomTitle(s)) }) : S.host.running ? t("server_running") : t("not_in_session");
   $("#conn").innerHTML = `<span class="dot ${st}"></span><div><b>${statusLabel(st)}</b><small>${sub}</small></div>`;
   $("#ver").textContent = `Sesja ${S.info.version} · mod ${S.info.mod_version}`;
 }
@@ -650,7 +622,7 @@ RENDER.studio = () => {
     <div class="head">
       <div>
         <div class="room-label">${t("room")}</div>
-        <h1 class="room-title">${esc(s.room)}</h1>
+        <h1 class="room-title">${esc(roomTitle(s))}</h1>
         <canvas class="room-wave" id="room-wave" aria-hidden="true"></canvas>
         <div class="room-sub">
           <span class="pill"><span class="dot ${s.status}"></span>${statusLabel(s.status)}</span>
@@ -664,6 +636,7 @@ RENDER.studio = () => {
     </div>
     <div id="studio-error">${errorNotice(s)}</div>
     <div id="fw-box">${firewallNotice()}</div>
+    ${S.cfg.room === s.room ? invitePanel() : ""}
     <div class="studio-grid">
       <div class="stack">
         <section class="panel"><h2>${t("in_session")} <span class="muted" id="people-n"></span></h2><div class="people" id="people"></div></section>
@@ -674,40 +647,130 @@ RENDER.studio = () => {
     ${S.host.running ? `<div style="margin-top:18px">${hostPanel()}</div>` : ""}`;
 };
 
+/* link do sesji: https://serwer/s/<kod>; sam kod = domyślny serwer */
+function parseLink(raw) {
+  const v = String(raw || "").trim();
+  const m = v.match(/^(https?:\/\/[^/\s]+)\/s\/([A-Za-z0-9]{4,40})\/?$/i);
+  if (m) return { server: m[1].toLowerCase(), room: m[2].toLowerCase() };
+  if (/^[a-z0-9]{6,40}$/i.test(v)) return { server: S.publicServer, room: v.toLowerCase() };
+  return null;
+}
+const roomTitle = (s) => (S.cfg.room_name && S.cfg.room === s.room ? S.cfg.room_name : s.room);
+const inviteLink = () => `${S.cfg.server.replace(/\/+$/, "")}/s/${S.cfg.room}`;
+const safePass = (v) => String(v || "").replace(/[^A-Za-z0-9._-]/g, "");
+
+function invitePanel() {
+  if (!S.cfg.room_name) return "";
+  const link = inviteLink();
+  return `<section class="panel invite">
+    <div class="invite-ic">${icon("link")}</div>
+    <div class="invite-body"><h2>${t("invite_title")}</h2><p class="muted">${t("invite_text")}</p>
+      <div class="addr big"><code>${esc(link)}</code><button class="btn icon ghost" title="${esc(t("copy"))}" data-copy="${esc(link)}">${icon("copy")}</button></div>
+      ${S.cfg.password ? `<div class="invite-pass"><span>${t("session_pass")}</span><code>${esc(S.cfg.password)}</code><button class="btn icon ghost" title="${esc(t("copy"))}" data-copy="${esc(S.cfg.password)}">${icon("copy")}</button></div>` : ""}
+    </div></section>`;
+}
+
 function studioEmpty() {
   const cloud = S.cfg.cloud_url;
   return `
     ${head(t("nav_studio"), t("studio_empty_lead"), `<button class="btn ghost" data-view="guide">${icon("link")}${t("nav_guide")}</button>`)}
     <div id="fw-box">${firewallNotice()}</div>
     ${S.host.running ? `<div style="margin-bottom:18px">${hostPanel()}</div>` : ""}
-    <div class="choice-grid three">
-      <section class="panel choice choice-hero">
-        <span class="ribbon">${t("recommended")}</span>
-        <div class="choice-ic ic-amber">${icon("server")}</div>
-        <h3>${t("choice_cloud_t")}</h3>
-        <p>${t("choice_cloud_d")}</p>
-        ${cloud ? `<div class="addr"><code>${esc(cloud)}</code><button class="btn icon ghost" title="${esc(t("copy"))}" data-copy="${esc(cloud)}">${icon("copy")}</button></div>
-          <div class="row"><button class="btn primary" data-act="cloud-join">${t("cloud_connect")}</button><button class="btn ghost" data-view="cloud">${t("cloud_manage")}</button></div>`
-        : `<button class="btn primary" data-view="cloud">${icon("server")}${t("cloud_create")}</button>`}
-      </section>
-      <section class="panel choice">
-        <div class="choice-ic ic-signal">${icon("studio")}</div>
-        <h3>${t("choice_local_t")}</h3>
-        <p>${t("host_text")}</p>
-        <button class="btn ghost" data-act="host-and-join">${t(S.host.running ? "join_own" : "start_and_join")}</button>
-      </section>
-      <section class="panel choice">
-        <div class="choice-ic ic-paper">${icon("link")}</div>
-        <h3>${t("join_title")}</h3>
-        <p>${t("join_text")}</p>
-        <div class="field"><input class="input" id="join-server" placeholder="https://sesja.twojadomena.pl" value="${esc(S.cfg.server)}"></div>
-        <div class="form-grid">
-          <input class="input" id="join-room" placeholder="${esc(t("room"))}" value="${esc(S.cfg.room)}">
-          <input class="input" id="join-pass" type="password" placeholder="${esc(t("password_opt"))}" value="${esc(S.cfg.password)}">
-        </div>
-        <button class="btn ghost" data-act="join">${t("join")}</button>
-      </section>
-    </div>`;
+    <div class="choice-grid two">
+      <form class="panel choice choice-hero" id="create-form" autocomplete="off">
+        <div class="choice-ic ic-amber">${icon("studio")}</div>
+        <h3>${t("create_title")}</h3>
+        <p>${t("create_text")}</p>
+        <label class="field"><span>${t("session_name")}</span><input class="input" name="name" maxlength="60" placeholder="${esc(t("session_name_ph"))}"></label>
+        <label class="field"><span>${t("session_pass")}</span><input class="input" name="password" type="password" maxlength="60"><small>${t("pass_rule")}</small></label>
+        <button class="btn primary big" id="create-go">${icon("studio")}${t("create_btn")}</button>
+      </form>
+      <form class="panel choice" id="link-form" autocomplete="off">
+        <div class="choice-ic ic-signal">${icon("link")}</div>
+        <h3>${t("link_title")}</h3>
+        <p>${t("link_text")}</p>
+        <label class="field"><span>${t("link_label")}</span><input class="input" name="link" placeholder="${esc(S.publicServer)}/s/…"></label>
+        <label class="field"><span>${t("session_pass")}</span><input class="input" name="password" type="password" maxlength="60"></label>
+        <button class="btn ghost big" id="link-go">${icon("users")}${t("link_btn")}</button>
+      </form>
+    </div>
+    <details class="more">
+      <summary><b>${t("more_options")}</b><span class="muted">${t("more_options_d")}</span></summary>
+      <div class="choice-grid three">
+        <section class="panel choice">
+          <div class="choice-ic ic-amber">${icon("server")}</div>
+          <h3>${t("choice_cloud_t")}</h3>
+          <p>${t("choice_cloud_d")}</p>
+          ${cloud ? `<div class="addr"><code>${esc(cloud)}</code><button class="btn icon ghost" title="${esc(t("copy"))}" data-copy="${esc(cloud)}">${icon("copy")}</button></div>
+            <div class="row"><button class="btn primary" data-act="cloud-join">${t("cloud_connect")}</button><button class="btn ghost" data-view="cloud">${t("cloud_manage")}</button></div>`
+          : `<button class="btn ghost" data-view="cloud">${icon("server")}${t("cloud_create")}</button>`}
+        </section>
+        <section class="panel choice">
+          <div class="choice-ic ic-signal">${icon("studio")}</div>
+          <h3>${t("choice_local_t")}</h3>
+          <p>${t("host_text")}</p>
+          <button class="btn ghost" data-act="host-and-join">${t(S.host.running ? "join_own" : "start_and_join")}</button>
+        </section>
+        <section class="panel choice">
+          <div class="choice-ic ic-paper">${icon("link")}</div>
+          <h3>${t("join_title")}</h3>
+          <p>${t("join_text")}</p>
+          <div class="field"><input class="input" id="join-server" placeholder="https://sesja.twojadomena.pl" value="${esc(S.cfg.server)}"></div>
+          <div class="form-grid">
+            <input class="input" id="join-room" placeholder="${esc(t("room"))}" value="${esc(S.cfg.room)}">
+            <input class="input" id="join-pass" type="password" placeholder="${esc(t("password_opt"))}" value="${esc(S.cfg.password)}">
+          </div>
+          <button class="btn ghost" data-act="join">${t("join")}</button>
+        </section>
+      </div>
+    </details>`;
+}
+
+function busyBtn(btn, label) {
+  const html = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<div class="spinner"></div>${label}`;
+  return () => { btn.disabled = false; btn.innerHTML = html; };
+}
+
+async function enterSession(cfg) {
+  S.cfg = await invoke("save_config", { cfg: { ...S.cfg, ...cfg } });
+  await connect();
+  go("studio");
+  renderView(true);
+}
+
+function bindStudioForms() {
+  $("#create-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const name = String(f.get("name") || "").trim();
+    const password = safePass(f.get("password"));
+    if (!name) return toast({ title: t("need_name") });
+    if (!S.cfg.nick) return toast({ title: t("need_nick"), text: t("need_nick_text") });
+    const done = busyBtn($("#create-go"), t("creating"));
+    try {
+      const r = await invoke("room_create", { server: S.publicServer, name, password });
+      await enterSession({ server: r.server || S.publicServer, room: r.room, password, room_name: r.name });
+      navigator.clipboard?.writeText(r.link).catch(() => {});
+      toast({ title: t("session_created"), text: r.link, timeout: 8000 });
+    } catch (err) { fail(err); done(); }
+  });
+  $("#link-form")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    const raw = String(f.get("link") || "").trim();
+    if (!raw) return toast({ title: t("need_link") });
+    const l = parseLink(raw);
+    if (!l) return toast({ title: t("bad_link"), text: raw });
+    if (!S.cfg.nick) return toast({ title: t("need_nick"), text: t("need_nick_text") });
+    const done = busyBtn($("#link-go"), t("st_connecting"));
+    try {
+      const info = await invoke("room_info", { server: l.server, room: l.room });
+      if (info.exists === false) { done(); return toast({ title: t("no_such_session"), text: raw }); }
+      await enterSession({ server: l.server, room: l.room, password: safePass(f.get("password")), room_name: info.name || l.room });
+    } catch (err) { fail(err); done(); }
+  });
 }
 
 /* --- kreator: serwer w chmurze (Cloudflare) --- */
@@ -895,7 +958,7 @@ REFRESH.studio = () => {
   const pill = document.querySelector(".room-sub .pill");
   if (pill) pill.innerHTML = `<span class="dot ${s.status}"></span>${statusLabel(s.status)}`;
 };
-AFTER.studio = () => S.session && REFRESH.studio();
+AFTER.studio = () => (S.session ? REFRESH.studio() : bindStudioForms());
 
 /* --- jak połączyć się ze znajomymi --- */
 const GUIDE_STEPS = [
@@ -1357,7 +1420,7 @@ async function connect() {
 const ACTIONS = {
   async "cloud-join"() {
     try {
-      S.cfg = await invoke("save_config", { cfg: { ...S.cfg, server: S.cfg.cloud_url } });
+      S.cfg = await invoke("save_config", { cfg: { ...S.cfg, server: S.cfg.cloud_url, room_name: "" } });
       await connect();
       go("studio");
       renderView(true);
@@ -1390,7 +1453,7 @@ const ACTIONS = {
   async "host-and-join"() {
     try {
       if (!S.host.running) S.host = await invoke("host_start", { port: S.cfg.host_port || 8765, password: S.cfg.host_password });
-      S.cfg = await invoke("save_config", { cfg: { ...S.cfg, server: `http://127.0.0.1:${S.host.port}`, password: S.cfg.host_password } });
+      S.cfg = await invoke("save_config", { cfg: { ...S.cfg, server: `http://127.0.0.1:${S.host.port}`, password: S.cfg.host_password, room_name: "" } });
       await connect();
       renderView(true);
       checkFirewall();
@@ -1400,7 +1463,7 @@ const ACTIONS = {
     const server = $("#join-server").value.trim(), room = $("#join-room").value.trim();
     if (!server || !room) return toast({ title: t("need_server_room") });
     try {
-      S.cfg = await invoke("save_config", { cfg: { ...S.cfg, server, room, password: $("#join-pass").value.trim() } });
+      S.cfg = await invoke("save_config", { cfg: { ...S.cfg, server, room, password: $("#join-pass").value.trim(), room_name: "" } });
       await connect();
       renderView(true);
     } catch (e) { fail(e); }
@@ -1660,6 +1723,7 @@ async function boot() {
     invoke("get_config"), invoke("app_info"), invoke("changelog"), invoke("host_status"), invoke("detect_reaper"),
   ]);
   Object.assign(S, { cfg, info, changelog, host, reaper: reaperInfo });
+  S.publicServer = await invoke("public_server").catch(() => "https://sesja.krixishere.org");
   setLang(cfg.lang || detectLang());
   if (!cfg.lang) S.cfg = await invoke("save_config", { cfg: { ...cfg, lang: lang() } });
   applyStaticTexts();

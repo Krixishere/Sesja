@@ -31,7 +31,7 @@ def main():
     server = f"http://127.0.0.1:{port}"
     # RMP_SERVER_URL=http://... -> test działającego już serwera (np. wrangler dev dla Cloudflare)
     external = os.environ.get("RMP_SERVER_URL")
-    room = f"e2e{int(time.time())}" if external else "test"
+    room = os.environ.get("RMP_ROOM") or (f"e2e{int(time.time())}" if external else "test")
     if external:
         server = external.rstrip("/")
     env = dict(os.environ, NO_PROXY="127.0.0.1,localhost", no_proxy="127.0.0.1,localhost", RMP_ROOM=room)
@@ -103,7 +103,8 @@ def main():
         check(any("Multiplayer" in u for u in b["undo"]), "zmiany zdalne lądują w historii cofania")
 
         # stan serwera
-        st = json.load(urllib.request.urlopen(server + f"/api/state?room={room}"))
+        req = urllib.request.Request(server + f"/api/state?room={room}", headers={"X-RMP-Key": os.environ.get("RMP_PASSWORD", ""), "User-Agent": "sesja-e2e"})
+        st = json.load(urllib.request.urlopen(req))
         check(len(st["tracks"]) == 2 and len(st["items"]) == 2, "serwer: 2 ścieżki, 2 klipy")
         check([c["text"] for c in st["chat"]] == ["Cześć Bartek, wrzuć gitarę!", "Refren od 0:12 jest za cichy"],
               "serwer: czat z polskimi znakami")

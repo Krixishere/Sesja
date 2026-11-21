@@ -8,7 +8,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 const SAFE = /^[A-Za-z0-9._~-]{1,200}$/;
 const MAX_OPS_PER_RESPONSE = 400;
 const MAX_LOG = 5000; // ile operacji trzymamy (starsze -> klient robi pełną synchronizację)
@@ -40,22 +40,81 @@ async function userColor(name) {
   return PALETTE[h[15] & 0x0f];
 }
 
+// kod sesji: 10 znaków bez mylących (0/o, 1/l/i)
+const CODE_ABC = "abcdefghjkmnpqrstuvwxyz23456789";
+function newCode() {
+  const b = crypto.getRandomValues(new Uint8Array(10));
+  return [...b].map((x) => CODE_ABC[x % CODE_ABC.length]).join("");
+}
+async function sha256(s) {
+  const h = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)));
+  return [...h].map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+const htmlEsc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const ROOM_PATHS = new Set(["/api/state", "/api/sync", "/api/file", "/api/room"]);
+const DOWNLOAD = "https://github.com/Krixishere/Sesja/releases/latest";
+
+function page(title, body) {
+  return new Response(
+    `<!doctype html><html lang="pl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${htmlEsc(title)}</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(1200px 600px at 20% -10%,#2a2440 0,transparent 60%),radial-gradient(900px 500px at 110% 110%,#173a3a 0,transparent 55%),#0e1424;color:#eae3d2;font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+.card{width:min(520px,100%);background:rgba(255,255,255,.04);border:1px solid rgba(234,227,210,.12);border-radius:22px;padding:32px;box-shadow:0 30px 80px rgba(0,0,0,.45);animation:in .7s cubic-bezier(.2,.8,.2,1)}
+@keyframes in{from{opacity:0;transform:translateY(14px) scale(.98);filter:blur(6px)}}
+.k{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:#f3a73b}h1{margin:6px 0 4px;font-size:34px;line-height:1.1;letter-spacing:-.02em}
+p{color:rgba(234,227,210,.72)}code{display:block;margin:14px 0;padding:12px 14px;border-radius:12px;background:#0a0f1c;border:1px solid rgba(234,227,210,.1);font:14px ui-monospace,monospace;word-break:break-all}
+ol{padding-left:20px;color:rgba(234,227,210,.85)}li{margin:6px 0}a.b{display:inline-block;margin-top:14px;padding:12px 18px;border-radius:12px;background:#f3a73b;color:#1a1408;font-weight:600;text-decoration:none}
+.bars{display:flex;gap:4px;height:26px;align-items:flex-end;margin-bottom:14px}.bars i{width:5px;border-radius:3px;background:#f3a73b;animation:b 1.1s ease-in-out infinite}
+.bars i:nth-child(2){animation-delay:-.2s;background:#5fc9b5}.bars i:nth-child(3){animation-delay:-.4s}.bars i:nth-child(4){animation-delay:-.6s;background:#f0524f}.bars i:nth-child(5){animation-delay:-.8s}
+@keyframes b{0%,100%{height:30%}50%{height:100%}}@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style><div class="card"><div class="bars"><i></i><i></i><i></i><i></i><i></i></div>${body}</div></html>`,
+    { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } },
+  );
+}
+
+async function createRoom(request, env, url) {
+  let b;
+  try { b = await request.json(); } catch { return err(400, "bad_json", "Invalid JSON"); }
+  const name = String(b.name || "").trim().slice(0, 60);
+  if (!name) return err(400, "bad_name", "Session name is required");
+  const password = String(b.password || "");
+  if (password.length > 200) return err(400, "bad_password", "Password too long");
+  for (let i = 0; i < 4; i++) {
+    const code = newCode();
+    const stub = env.ROOMS.get(env.ROOMS.idFromName(code));
+    const r = await stub.fetch("https://room/__init", { method: "POST", body: JSON.stringify({ name, password }) });
+    if (r.status === 409) continue;
+    const link = `${url.origin}/s/${code}`;
+    return json({ ok: true, room: code, name, link, server: url.origin, has_password: !!password });
+  }
+  return err(500, "busy", "Could not create a session, try again");
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    const central = !!env.CENTRAL;
     if (url.pathname === "/" || url.pathname === "/api/ping") {
       if (url.pathname === "/" && (request.headers.get("Accept") || "").includes("text/html")) {
-        return new Response(
-          `<!doctype html><meta charset="utf-8"><title>Sesja</title><body style="font:16px system-ui;background:#0e1424;color:#eae3d2;padding:40px">` +
-            `<h1>Sesja – serwer działa</h1><p>Wpisz ten adres w aplikacji Sesja albo w oknie moda w REAPERze.</p>`,
-          { headers: { "Content-Type": "text/html; charset=utf-8" } },
-        );
+        return page("Sesja", `<div class="k">Sesja</div><h1>Serwer działa</h1><p>Wspólne nagrywanie w REAPERze – z każdego miasta naraz. Załóż sesję w aplikacji Sesja i wyślij znajomym link.</p><a class="b" href="${DOWNLOAD}">Pobierz Sesję</a>`);
       }
-      return json({ ok: true, app: "Sesja", cloud: true, version: VERSION, auth: !!env.PASSWORD });
+      return json({ ok: true, app: "Sesja", cloud: true, version: VERSION, auth: !!env.PASSWORD, rooms: true, central });
     }
-    if (env.PASSWORD && request.headers.get("X-RMP-Key") !== env.PASSWORD) {
+    // strona zaproszenia: https://serwer/s/<kod>
+    const inv = url.pathname.match(/^\/s\/([a-z0-9]{4,40})\/?$/);
+    if (inv && request.method === "GET") {
+      const info = await (await env.ROOMS.get(env.ROOMS.idFromName(inv[1])).fetch("https://room/api/room")).json();
+      if (!info.exists) return page("Sesja", `<div class="k">Sesja</div><h1>Nie ma takiej sesji</h1><p>Link jest niepełny albo sesja została usunięta. Poproś o nowy link.</p>`);
+      return page(`Sesja – ${info.name}`, `<div class="k">Zaproszenie do sesji</div><h1>${htmlEsc(info.name)}</h1>
+        <p>Ktoś zaprasza Cię do wspólnego nagrywania w REAPERze.</p><ol><li>Zainstaluj aplikację <b>Sesja</b> (Windows, macOS, Linux).</li>
+        <li>W Studiu wybierz <b>Dołącz przez link</b> i wklej ten adres:</li></ol><code>${htmlEsc(url.origin + url.pathname)}</code>
+        ${info.has_password ? "<p>Hasło dostaniesz od osoby, która Cię zaprosiła.</p>" : ""}<a class="b" href="${DOWNLOAD}">Pobierz Sesję</a>`);
+    }
+    if (env.PASSWORD && request.headers.get("X-RMP-Key") !== env.PASSWORD && url.pathname !== "/api/room") {
       return err(403, "bad_password", "Wrong server password");
     }
+    if (url.pathname === "/api/rooms" && request.method === "POST") return createRoom(request, env, url);
+    if (!ROOM_PATHS.has(url.pathname)) return err(404, "not_found", "Unknown endpoint");
     let room = url.searchParams.get("room");
     // starsze wersje moda wysyłają pokój tylko w treści /api/sync
     if (!room && url.pathname === "/api/sync" && request.method === "POST") {
@@ -65,6 +124,7 @@ export default {
     }
     if (!room || !SAFE.test(room)) return err(400, "bad_room", "Invalid room name");
     const stub = env.ROOMS.get(env.ROOMS.idFromName(room));
+    if (central) request = new Request(request, { headers: new Headers([...request.headers, ["X-Sesja-Central", "1"]]) });
     return stub.fetch(request);
   },
 };
@@ -92,11 +152,39 @@ export class Room extends DurableObject {
     const logs = await st.list({ prefix: "log:", reverse: true, limit: MAX_LOG });
     this.log = [...logs.values()].reverse();
     this.floor = this.log.length ? this.log[0].seq - 1 : this.seq;
+    this.room = (await st.get("room")) || null; // {name, salt, hash, created} – sesja założona z linkiem
+  }
+
+  async init(request) {
+    if (this.room) return err(409, "exists", "Session exists");
+    const b = await request.json();
+    const salt = [...crypto.getRandomValues(new Uint8Array(12))].map((x) => x.toString(16).padStart(2, "0")).join("");
+    this.room = { name: b.name, salt, hash: b.password ? await sha256(salt + ":" + b.password) : "", created: now() };
+    await this.ctx.storage.put("room", this.room);
+    return json({ ok: true });
+  }
+
+  // null = wolno; inaczej odpowiedź z błędem
+  async guard(request) {
+    if (!this.room) {
+      // na serwerze centralnym wchodzi się tylko do sesji założonych przez „Utwórz sesję”
+      return request.headers.get("X-Sesja-Central") ? err(404, "no_room", "Session not found") : null;
+    }
+    if (!this.room.hash) return null;
+    const key = request.headers.get("X-RMP-Key") || "";
+    if (key && (await sha256(this.room.salt + ":" + key)) === this.room.hash) return null;
+    return err(403, "bad_password", "Wrong session password");
   }
 
   async fetch(request) {
     const url = new URL(request.url);
     const m = request.method;
+    if (url.pathname === "/__init" && m === "POST") return this.init(request);
+    if (url.pathname === "/api/room") {
+      return json({ ok: true, exists: !!this.room, name: this.room?.name || null, has_password: !!this.room?.hash });
+    }
+    const denied = await this.guard(request);
+    if (denied) return denied;
     if (url.pathname === "/api/state" && m === "GET") return this.state();
     if (url.pathname === "/api/sync" && m === "POST") return this.sync(request);
     if (url.pathname === "/api/file" && m === "PUT") return this.putFile(request, url.searchParams.get("id"));

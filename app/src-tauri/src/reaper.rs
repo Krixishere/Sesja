@@ -347,6 +347,24 @@ fn set_autostart(res: &Path, on: bool) -> Result<(), String> {
     std::fs::write(&path, out).map_err(|e| tf("write_failed", &[&"__startup.lua", &e]))
 }
 
+/// Przekazuje bieżącą sesję do działającego moda: mod co chwilę zagląda do tego pliku
+/// i sam przełącza się na nową sesję (bez restartu REAPERa i bez wpisywania czegokolwiek).
+pub fn write_handoff(res: &Path, c: &Conn) -> Result<(), String> {
+    let dir = res.join("Scripts").join(SCRIPT_DIR);
+    if !dir.is_dir() {
+        return Ok(()); // mod nie jest zainstalowany
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let body = format!(
+        "server={}\nroom={}\nuser={}\npassword={}\nlang={}\nstamp={stamp}\n",
+        c.server, c.room, c.user, c.password, c.lang
+    );
+    std::fs::write(dir.join("session.txt"), body).map_err(|e| tf("write_failed", &[&"session.txt", &e]))
+}
+
 /// Zapisuje nick/serwer/pokój w ustawieniach REAPERa, żeby skrypt łączył się sam.
 pub fn write_settings(res: &Path, c: &Conn) -> Result<(), String> {
     let path = res.join("reaper-extstate.ini");

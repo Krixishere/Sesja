@@ -31,6 +31,16 @@ jobs:
           npx wrangler dev --port 8799 --ip 127.0.0.1 > /tmp/wrangler.log 2>&1 &
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:8799/api/ping && break; sleep 1; done
           cd ../.. && RMP_SERVER_URL=http://127.0.0.1:8799 python3 tests/run_e2e.py
+      - name: E2E z serwerem centralnym (sesja z linkiem i hasłem)
+        run: |
+          cd server/cloudflare
+          npx wrangler dev --port 8797 --ip 127.0.0.1 --var CENTRAL:1 > /tmp/wrangler-central.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:8797/api/ping && break; sleep 1; done
+          cd ../..
+          test "$(curl -s 'http://127.0.0.1:8797/api/state?room=nieistnieje' | python3 -c 'import sys,json;print(json.load(sys.stdin)["code"])')" = no_room
+          ROOM=$(curl -s -X POST http://127.0.0.1:8797/api/rooms -d '{"name":"CI","password":"haslo1"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["room"])')
+          test "$(curl -s "http://127.0.0.1:8797/api/state?room=$ROOM" | python3 -c 'import sys,json;print(json.load(sys.stdin)["code"])')" = bad_password
+          RMP_SERVER_URL=http://127.0.0.1:8797 RMP_ROOM=$ROOM RMP_PASSWORD=haslo1 python3 tests/run_e2e.py
       - name: E2E z serwerem wbudowanym w aplikację
         run: |
           cargo build --manifest-path app/src-tauri/Cargo.toml

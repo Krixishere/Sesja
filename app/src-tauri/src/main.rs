@@ -158,6 +158,14 @@ fn session_connect(app: AppHandle, st: State<AppState>) -> Result<(), String> {
     if cfg.nick.is_empty() || cfg.server.is_empty() || cfg.room.is_empty() {
         return Err(i18n::t("fill_profile"));
     }
+    if let Some(res) = cfg.reaper_resource.as_deref() {
+        let rc = reaper::Conn { server: &cfg.server, room: &cfg.room, user: &cfg.nick, password: &cfg.password, lang: i18n::current() };
+        let res = std::path::Path::new(res);
+        let _ = reaper::write_handoff(res, &rc);
+        if !reaper::is_running() {
+            let _ = reaper::write_settings(res, &rc);
+        }
+    }
     let conn = session::Conn { server: cfg.server, room: cfg.room, user: cfg.nick, password: cfg.password };
     let mut s = st.session.lock().unwrap();
     if let Some(old) = s.take() {
@@ -165,6 +173,28 @@ fn session_connect(app: AppHandle, st: State<AppState>) -> Result<(), String> {
     }
     *s = Some(session::Session::start(app, conn));
     Ok(())
+}
+
+#[tauri::command]
+async fn room_create(server: String, name: String, password: String) -> Result<Value, String> {
+    let name: String = name.trim().chars().take(60).collect();
+    let password = config::safe(&password);
+    tauri::async_runtime::spawn_blocking(move || session::create_room(&server, &name, &password))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn room_info(server: String, room: String) -> Result<Value, String> {
+    let room = config::safe(&room);
+    tauri::async_runtime::spawn_blocking(move || session::room_info(&server, &room))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn public_server() -> &'static str {
+    config::PUBLIC_SERVER
 }
 
 #[tauri::command]
@@ -410,6 +440,9 @@ fn main() {
             reaper_running,
             launch_reaper,
             session_connect,
+            room_create,
+            room_info,
+            public_server,
             session_disconnect,
             session_state,
             send_chat,

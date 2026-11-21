@@ -591,3 +591,34 @@ body { background: radial-gradient(140% 90% at 70% -10%, #18213b 0%, var(--ink) 
 
 @media (prefers-reduced-motion: reduce) { .aurora { display: none; } .choice-hero::after { animation: none; } }
 @media (prefers-reduced-transparency: reduce) { .side, .panel, .clip, .step, .cmt { backdrop-filter: none; background: var(--panel); } }
+
+/* --- sesje z linkiem (1.5.0) --- */
+.choice .field { display: grid; gap: 6px; }
+.choice .btn.big { justify-self: stretch; justify-content: center; }
+details.more { margin-top: 22px; }
+details.more > summary {
+  list-style: none; cursor: pointer; display: flex; gap: 12px; align-items: baseline; padding: 12px 4px;
+  color: var(--paper-2); border-top: 1px solid var(--line); transition: color .2s ease;
+}
+details.more > summary::-webkit-details-marker { display: none; }
+details.more > summary::before {
+  content: ""; width: 8px; height: 8px; border-right: 1.7px solid currentColor; border-bottom: 1.7px solid currentColor;
+  transform: rotate(-45deg); transition: transform .25s cubic-bezier(.2,.8,.2,1); align-self: center;
+}
+details.more[open] > summary::before { transform: rotate(45deg); }
+details.more > summary:hover { color: var(--paper); }
+details.more[open] > .choice-grid { animation: more-in .4s cubic-bezier(.2,.8,.2,1); }
+@keyframes more-in { from { opacity: 0; transform: translateY(-6px); } }
+.invite { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 18px; margin-bottom: 18px; align-items: start;
+  background: linear-gradient(135deg, rgba(243,167,59,.10), rgba(95,201,181,.06) 60%, transparent), var(--panel);
+  border-color: rgba(243,167,59,.25); animation: more-in .5s cubic-bezier(.2,.8,.2,1); }
+.invite-ic { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; background: rgba(243,167,59,.14); color: var(--amber); }
+.invite-ic svg { width: 22px; height: 22px; }
+.invite h2 { margin-bottom: 4px; }
+.invite .addr { margin-top: 12px; }
+.invite-pass { display: flex; gap: 10px; align-items: center; margin-top: 8px; color: var(--muted); font-size: 13.5px; }
+.invite-pass code { color: var(--paper); }
+.ob-hint { display: flex; gap: 12px; align-items: flex-start; margin-top: 18px; padding: 14px 16px; border-radius: 14px;
+  background: var(--panel-2); color: var(--paper-2); font-size: 14px; }
+.ob-hint svg { width: 20px; height: 20px; flex: none; color: var(--amber); margin-top: 2px; }
+@media (prefers-reduced-motion: reduce) { details.more[open] > .choice-grid, .invite { animation: none; } }

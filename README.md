@@ -20,9 +20,17 @@ Projekt składa się z trzech części:
    `/Applications`, `~/.config/REAPER`, wersje przenośne).
 2. Jeśli go nie znajdzie, pokaże komunikat „Nie znaleziono REAPERa”. Wtedy możesz
    **wskazać folder REAPERa** albo przejść na stronę pobierania.
-3. Podajesz nick i wybierasz: **Zakładam sesję** (serwer startuje w aplikacji) albo **Dołączam** (adres od znajomego).
+3. Podajesz nick.
 4. **Instalacja moda**: skrypt trafia do `Scripts/Sesja/`, akcja do menu *Actions*, opcjonalnie
    autostart z REAPERem, a Twój nick i adres sesji do ustawień REAPERa. Mod łączy się sam.
+
+### Sesja z linkiem (domyślnie)
+
+W Studiu klikasz **Utwórz sesję**, wpisujesz nazwę i hasło, a aplikacja zakłada sesję na wspólnym
+serwerze `https://sesja.krixishere.org` i daje link, np. `https://sesja.krixishere.org/s/k7m2xq9pwd`.
+Wysyłasz znajomym link i hasło. Oni w Studiu wybierają **Dołącz przez link**. Mod w REAPERze sam
+przełącza się na tę sesję. Adres domyślnego serwera jest w `app/src-tauri/src/config.rs`
+(`PUBLIC_SERVER`).
 
 ### Menu
 

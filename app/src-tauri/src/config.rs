@@ -25,15 +25,20 @@ pub struct Config {
     pub lang: String,
     /// Adres serwera utworzonego w chmurze (Cloudflare), jeśli taki jest.
     pub cloud_url: String,
+    /// Nazwa sesji założonej przez „Utwórz sesję” (pokój to wtedy losowy kod z linku).
+    pub room_name: String,
 }
+
+/// Domyślny, wspólny serwer Sesji – wszyscy zakładają i dołączają do sesji tutaj.
+pub const PUBLIC_SERVER: &str = "https://sesja.krixishere.org";
 
 impl Default for Config {
     fn default() -> Self {
         Config {
             onboarded: false,
             nick: String::new(),
-            server: "http://127.0.0.1:8765".into(),
-            room: "studio".into(),
+            server: PUBLIC_SERVER.into(),
+            room: String::new(),
             password: String::new(),
             reaper_exe: None,
             reaper_resource: None,
@@ -44,6 +49,7 @@ impl Default for Config {
             host_on_start: false,
             lang: String::new(),
             cloud_url: String::new(),
+            room_name: String::new(),
         }
     }
 }

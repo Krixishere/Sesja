@@ -10,7 +10,7 @@
 --
 --   Wymagania: REAPER 6.0+, program curl (wbudowany w Windows 10/11 i macOS).
 
-local VERSION = "1.4.0"
+local VERSION = "1.5.0"
 local M = {}
 
 -------------------------------------------------------------------------------
@@ -2404,9 +2404,35 @@ end
 -------------------------------------------------------------------------------
 -- Pętla główna
 -------------------------------------------------------------------------------
+-- Aplikacja Sesja zapisuje bieżącą sesję w session.txt obok skryptu – przełączamy się sami.
+local HANDOFF = (debug.getinfo(1, "S").source:match("^@(.*[\\/])") or "") .. "session.txt"
+local handoffSeen, handoffNext = nil, 0
+local function check_handoff(t)
+  if t < handoffNext then return end
+  handoffNext = t + 2
+  local f = io.open(HANDOFF, "rb")
+  if not f then handoffSeen = handoffSeen or ""; return end
+  local body = f:read("*a") or ""
+  f:close()
+  if handoffSeen == nil then handoffSeen = body; return end -- przy starcie ustawienia ma już extstate
+  if body == handoffSeen then return end
+  handoffSeen = body
+  local v = {}
+  for k, val in body:gmatch("([%w_]+)=([^\r\n]*)") do v[k] = val end
+  local room = (v.room or ""):gsub("[^%w%._%-]", "")
+  if (v.server or "") == "" or room == "" then return end
+  if v.server == CFG.server and room == CFG.room and S.state == "on" then return end
+  CFG.server, CFG.room, CFG.password = v.server, room, safe_key(v.password)
+  if (v.user or "") ~= "" then CFG.user = v.user:sub(1, 40) end
+  for _, k in ipairs({ "server", "room", "user", "password" }) do set_ext(k, CFG[k]) end
+  if S.state ~= "off" then disconnect(true) end
+  connect()
+end
+
 local function main_loop()
   poll_jobs()
   local t = now()
+  check_handoff(t)
   if S.state == "on" or S.state == "error" then
     if not S.inflight and t >= S.nextSync then do_sync() end
     pump_transfers()

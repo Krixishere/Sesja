@@ -47,7 +47,9 @@ const TABLE: &[(&str, [&str; 5])] = &[
     ("update_source", ["Nieznane źródło aktualizacji.", "Unknown update source.", "Unbekannte Update-Quelle.", "Origen de actualización desconocido.", "Source de mise à jour inconnue."]),
     ("download_failed", ["Pobieranie nie powiodło się: {0}", "Download failed: {0}", "Download fehlgeschlagen: {0}", "La descarga falló: {0}", "Le téléchargement a échoué : {0}"]),
     // błędy serwera (pole "code" w odpowiedzi)
-    ("srv_bad_password", ["Złe hasło serwera.", "Wrong server password.", "Falsches Server-Passwort.", "Contraseña del servidor incorrecta.", "Mot de passe du serveur incorrect."]),
+    ("srv_bad_password", ["Złe hasło.", "Wrong password.", "Falsches Passwort.", "Contraseña incorrecta.", "Mot de passe incorrect."]),
+    ("srv_no_room", ["Nie ma takiej sesji – sprawdź link.", "This session doesn’t exist – check the link.", "Diese Session gibt es nicht – prüfe den Link.", "Esa sesión no existe: revisa el enlace.", "Cette session n’existe pas – vérifie le lien."]),
+    ("srv_no_rooms", ["Ten serwer nie obsługuje zakładania sesji z linkiem.", "This server doesn’t support creating sessions with a link.", "Dieser Server unterstützt keine Sessions per Link.", "Este servidor no permite crear sesiones con enlace.", "Ce serveur ne permet pas de créer des sessions avec un lien."]),
     ("srv_bad_room", ["Niepoprawna nazwa pokoju.", "Invalid room name.", "Ungültiger Raumname.", "Nombre de sala no válido.", "Nom de salon invalide."]),
     ("srv_other", ["Błąd serwera: {0}", "Server error: {0}", "Serverfehler: {0}", "Error del servidor: {0}", "Erreur du serveur : {0}"]),
 ];
@@ -74,6 +76,7 @@ pub fn server_error(v: &serde_json::Value) -> String {
     match v["code"].as_str() {
         Some("bad_password") => t("srv_bad_password"),
         Some("bad_room") => t("srv_bad_room"),
+        Some("no_room") => t("srv_no_room"),
         _ => tf("srv_other", &[&v["error"].as_str().unwrap_or("?")]),
     }
 }
