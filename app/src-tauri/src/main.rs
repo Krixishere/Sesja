@@ -1,6 +1,7 @@
 // Bez okna konsoli w wersji wydanej na Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod cloud;
 mod config;
 mod firewall;
 mod i18n;
@@ -265,6 +266,22 @@ fn host_status(st: State<AppState>) -> Value {
     }
 }
 
+/// Utworzenie / aktualizacja serwera Sesji na koncie Cloudflare użytkownika.
+#[tauri::command]
+async fn cloud_deploy(
+    app: AppHandle,
+    token: String,
+    name: String,
+    password: String,
+    hostname: String,
+) -> Result<Value, String> {
+    let a = app.clone();
+    let opts = cloud::Opts { token, name, password: config::safe(&password), hostname };
+    tauri::async_runtime::spawn_blocking(move || cloud::deploy(Some(&a), cloud::API, &opts))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn firewall_status(port: u16) -> Value {
     firewall::status(port)
@@ -404,6 +421,7 @@ fn main() {
             host_status,
             firewall_status,
             firewall_allow,
+            cloud_deploy,
             check_update,
             install_update,
             open_url,

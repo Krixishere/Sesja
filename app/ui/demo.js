@@ -7,9 +7,9 @@
   const listeners = {};
   const colors = { Ania: "#f58231", Bartek: "#46f0f0", Kuba: "#bcf60c" };
   const cfg = {
-    onboarded: params.get("demo") !== "onboard", nick: "Ania", server: "http://100.101.102.103:8765", room: "nowy_singiel",
+    onboarded: params.get("demo") !== "onboard", nick: params.get("off") ? "" : "Ania", server: "http://100.101.102.103:8765", room: "nowy_singiel",
     password: "", reaper_exe: null, reaper_resource: null, auto_update: false, autostart_script: true,
-    host_port: 8765, host_password: "", host_on_start: false, lang: params.get("lang") || "",
+    host_port: 8765, host_password: "", host_on_start: false, lang: params.get("lang") || "", cloud_url: params.get("cloud") || "",
   };
   const reaper = {
     found: params.get("reaper") !== "missing", exe: "C:\\Program Files\\REAPER (x64)\\reaper.exe",
@@ -77,6 +77,14 @@
     install_mod: ({ autostart }) => ({ script_path: "", action_registered: true, autostart, settings_written: true, warning: null, info: { ...reaper, script_version: "1.1.0", autostart } }),
     uninstall_mod: () => null,
     host_status: () => host,
+    cloud_deploy: () => new Promise((resolve) => {
+      const steps = [["account", "Krix Studio"], ["upload", "sesja-server"], ["subdomain", "https://sesja-server.krix.workers.dev"], ["domain", "https://sesja.krix.pl"], ["check", "https://sesja.krix.pl"]];
+      steps.forEach(([k, d], i) => {
+        setTimeout(() => emit("cloud-progress", { step: k, state: "run", detail: "" }), i * 500);
+        setTimeout(() => emit("cloud-progress", { step: k, state: "ok", detail: d }), i * 500 + 400);
+      });
+      setTimeout(() => resolve({ url: "https://sesja.krix.pl", workers_dev: "https://sesja-server.krix.workers.dev", alive: true, domain_error: null }), steps.length * 500 + 300);
+    }),
     firewall_status: ({ port }) => ({ applicable: true, allowed: params.get("fw") !== "block", port }),
     firewall_allow: ({ port }) => new Promise((r) => setTimeout(() => r({ applicable: true, allowed: true, port }), 900)),
     host_start: () => (host.running = true, host),

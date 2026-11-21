@@ -23,6 +23,8 @@ pub struct Config {
     pub host_on_start: bool,
     /// Język interfejsu: pl, en, de, es, fr; pusty = wykryj z systemu.
     pub lang: String,
+    /// Adres serwera utworzonego w chmurze (Cloudflare), jeśli taki jest.
+    pub cloud_url: String,
 }
 
 impl Default for Config {
@@ -41,6 +43,7 @@ impl Default for Config {
             host_password: String::new(),
             host_on_start: false,
             lang: String::new(),
+            cloud_url: String::new(),
         }
     }
 }

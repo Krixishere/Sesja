@@ -3,6 +3,18 @@
 Nagłówki wersji aplikacji mają postać `## Sesja X.Y.Z` – sekcja trafia automatycznie
 do opisu wydania na GitHubie.
 
+## Sesja 1.4.0
+
+- „Utwórz serwer w chmurze” prosto z aplikacji: wklejasz token Cloudflare, a Sesja sama wgrywa
+  serwer na Twoje konto, ustawia hasło, adres workers.dev i (opcjonalnie) Twoją domenę.
+  Bez terminala i wranglera.
+- Studio bez sesji: trzy jasne drogi – serwer w chmurze (polecane), na moim komputerze, dołączam.
+- Naprawione ciągłe „odświeżanie” i powtarzanie animacji w zakładkach (Jak połączyć, REAPER,
+  Zmiany, Ustawienia, Komentarze) – widoki przebudowują się tylko przy realnej zmianie.
+- Nowy wygląd: zorza w tle reagująca na aktywność, szklany pasek boczny, karty z reflektorem
+  pod kursorem i świecącą krawędzią, przyciski z błyskiem, wejście widoków z rozmyciem,
+  obracająca się ramka karty polecanej.
+
 ## Sesja 1.3.0
 
 - Własny serwer na Cloudflare (`server/cloudflare`): darmowy Worker + Durable Objects pod Twoją

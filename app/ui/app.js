@@ -42,6 +42,13 @@ const S = {
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+/* podmienia HTML tylko przy realnej zmianie – bez restartu animacji i migotania */
+function setHTML(el, html) {
+  if (!el || el._html === html) return false;
+  el._html = html;
+  el.innerHTML = html;
+  return true;
+}
 const icon = (name, style) => `<svg aria-hidden="true"${style ? ` style="${style}"` : ""}><use href="#i-${name}"/></svg>`;
 /* tłumaczenie z bezpiecznie wstawionymi parametrami (do HTML) */
 const th = (key, params = {}) => t(key, Object.fromEntries(Object.entries(params).map(([k, v]) => [k, esc(v)])));
@@ -604,20 +611,23 @@ function renderView(animate) {
     v.classList.remove("enter");
     void v.offsetWidth;
     v.classList.add("enter");
+    // animacja wejścia tylko raz – późniejsze odświeżenia danych nie mogą jej powtarzać
+    clearTimeout(renderView.t);
+    renderView.t = setTimeout(() => v.classList.remove("enter"), 900);
+  } else {
+    v.classList.remove("enter");
   }
   $("#main").scrollTop = 0;
   AFTER[S.view]?.();
 }
 
 /* aktualizacja widoku po zmianie stanu sesji – bez przebudowy pól formularzy */
+/* Widoki bez danych sesji (instrukcja, REAPER, zmiany, wsparcie, ustawienia) nie są
+   przebudowywane przy każdej paczce danych – wcześniej powodowało to ciągłe „odświeżanie”. */
+const SESSION_VIEWS = new Set(["studio", "chat", "music", "comments"]);
 function refreshView() {
-  const r = REFRESH[S.view];
-  if (r) return r();
-  const a = document.activeElement;
-  if (!a || a === document.body || !$("#view").contains(a)) {
-    $("#view").innerHTML = (RENDER[S.view] || RENDER.studio)();
-    AFTER[S.view]?.();
-  }
+  if (!SESSION_VIEWS.has(S.view)) return;
+  REFRESH[S.view]?.();
 }
 
 /* ------------------------------------------------------------------ widoki */
@@ -665,19 +675,29 @@ RENDER.studio = () => {
 };
 
 function studioEmpty() {
+  const cloud = S.cfg.cloud_url;
   return `
     ${head(t("nav_studio"), t("studio_empty_lead"), `<button class="btn ghost" data-view="guide">${icon("link")}${t("nav_guide")}</button>`)}
     <div id="fw-box">${firewallNotice()}</div>
     ${S.host.running ? `<div style="margin-bottom:18px">${hostPanel()}</div>` : ""}
-    <div class="choice-grid">
-      <section class="panel choice">
-        ${icon("server", "width:28px;height:28px;color:var(--amber)")}
-        <h3>${t("mode_host")}</h3>
-        <p>${t("host_text")}</p>
-        <button class="btn primary" data-act="host-and-join">${t(S.host.running ? "join_own" : "start_and_join")}</button>
+    <div class="choice-grid three">
+      <section class="panel choice choice-hero">
+        <span class="ribbon">${t("recommended")}</span>
+        <div class="choice-ic ic-amber">${icon("server")}</div>
+        <h3>${t("choice_cloud_t")}</h3>
+        <p>${t("choice_cloud_d")}</p>
+        ${cloud ? `<div class="addr"><code>${esc(cloud)}</code><button class="btn icon ghost" title="${esc(t("copy"))}" data-copy="${esc(cloud)}">${icon("copy")}</button></div>
+          <div class="row"><button class="btn primary" data-act="cloud-join">${t("cloud_connect")}</button><button class="btn ghost" data-view="cloud">${t("cloud_manage")}</button></div>`
+        : `<button class="btn primary" data-view="cloud">${icon("server")}${t("cloud_create")}</button>`}
       </section>
       <section class="panel choice">
-        ${icon("link", "width:28px;height:28px;color:var(--signal)")}
+        <div class="choice-ic ic-signal">${icon("studio")}</div>
+        <h3>${t("choice_local_t")}</h3>
+        <p>${t("host_text")}</p>
+        <button class="btn ghost" data-act="host-and-join">${t(S.host.running ? "join_own" : "start_and_join")}</button>
+      </section>
+      <section class="panel choice">
+        <div class="choice-ic ic-paper">${icon("link")}</div>
         <h3>${t("join_title")}</h3>
         <p>${t("join_text")}</p>
         <div class="field"><input class="input" id="join-server" placeholder="https://sesja.twojadomena.pl" value="${esc(S.cfg.server)}"></div>
@@ -685,10 +705,75 @@ function studioEmpty() {
           <input class="input" id="join-room" placeholder="${esc(t("room"))}" value="${esc(S.cfg.room)}">
           <input class="input" id="join-pass" type="password" placeholder="${esc(t("password_opt"))}" value="${esc(S.cfg.password)}">
         </div>
-        <button class="btn primary" data-act="join">${t("join")}</button>
+        <button class="btn ghost" data-act="join">${t("join")}</button>
       </section>
     </div>`;
 }
+
+/* --- kreator: serwer w chmurze (Cloudflare) --- */
+const CLOUD_STEPS = ["account", "upload", "secret", "subdomain", "domain", "check"];
+const CLOUD = { busy: false, steps: {}, result: null };
+RENDER.cloud = () => {
+  const r = CLOUD.result;
+  return `${head(t("cloud_title"), t("cloud_lead"), `<button class="btn ghost" data-view="studio">${t("back")}</button>`)}
+    <ol class="steps cloud-steps">
+      <li class="step" style="--i:0"><span class="step-n">1</span><div class="step-body">
+        <b>${t("cloud_s1_t")}</b><p>${t("cloud_s1_d")}</p>
+        <button class="btn ghost" data-url="https://dash.cloudflare.com/profile/api-tokens">${icon("link")}${t("cloud_open_cf")}</button>
+      </div>${icon("server", "width:22px;height:22px")}</li>
+      <li class="step" style="--i:1"><span class="step-n">2</span><div class="step-body">
+        <b>${t("cloud_s2_t")}</b>
+        <form id="cloud-form" class="cloud-form">
+          <label class="field wide"><span>${t("cloud_token")}</span><input class="input" name="token" type="password" autocomplete="off" placeholder="••••••••••••••••••••••••"><small>${t("cloud_token_hint")}</small></label>
+          <label class="field"><span>${t("cloud_domain")}</span><input class="input" name="hostname" placeholder="sesja.twojadomena.pl"><small>${t("cloud_domain_hint")}</small></label>
+          <label class="field"><span>${t("cloud_pass")}</span><input class="input" name="password" type="password" value="${esc(S.cfg.password)}"><small>${t("password_hint")}</small></label>
+          <div class="row wide"><button class="btn primary big" id="cloud-go" ${CLOUD.busy ? "disabled" : ""}>${CLOUD.busy ? `<div class="spinner"></div>${t("cloud_creating")}` : `${icon("server")}${t(S.cfg.cloud_url ? "cloud_update" : "cloud_create")}`}</button></div>
+        </form>
+      </div>${icon("settings", "width:22px;height:22px")}</li>
+    </ol>
+    <section class="panel cloud-progress" id="cloud-progress" ${Object.keys(CLOUD.steps).length ? "" : "hidden"}>${cloudProgressHtml()}</section>
+    ${r ? cloudDoneHtml(r) : ""}`;
+};
+function cloudProgressHtml() {
+  return `<ul class="prog">${CLOUD_STEPS.filter((k) => CLOUD.steps[k]).map((k) => {
+    const st = CLOUD.steps[k];
+    const mark = st.state === "run" ? `<div class="spinner"></div>` : st.state === "ok" ? `<span class="pm ok">${icon("check")}</span>`
+      : st.state === "fail" ? `<span class="pm bad">${icon("x")}</span>` : `<span class="pm wait">${icon("changes")}</span>`;
+    return `<li class="${st.state}">${mark}<span>${t("cloud_step_" + k)}</span><small>${esc(st.detail || "")}</small></li>`;
+  }).join("")}</ul>`;
+}
+function cloudDoneHtml(r) {
+  return `<section class="panel cloud-done">
+    <svg class="tick" viewBox="0 0 72 72" fill="none" stroke="#5fc9b5" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="36" cy="36" r="33"/><path d="M23 37l9 9 18-19"/></svg>
+    <div><h2>${t("cloud_done_t")}</h2><p class="muted">${t("cloud_done_d")}</p>
+      <div class="addr big"><code>${esc(r.url)}</code><button class="btn icon ghost" title="${esc(t("copy"))}" data-copy="${esc(r.url)}">${icon("copy")}</button></div>
+      ${r.domain_error ? `<p class="warn">${th("cloud_domain_fail", { err: r.domain_error })}</p>` : ""}
+      ${r.alive ? "" : `<p class="muted">${t("cloud_wait_note")}</p>`}
+      <div class="row"><button class="btn primary big" data-act="cloud-join">${t("cloud_connect")}</button><button class="btn ghost" data-view="guide">${t("nav_guide")}</button></div>
+    </div></section>`;
+}
+AFTER.cloud = () => {
+  $("#cloud-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (CLOUD.busy) return;
+    const f = new FormData(e.target);
+    const token = String(f.get("token") || "").trim();
+    if (!token) return toast({ title: t("need_token"), text: t("cloud_token_hint") });
+    CLOUD.busy = true; CLOUD.steps = {}; CLOUD.result = null;
+    renderView(false);
+    try {
+      const r = await invoke("cloud_deploy", { token, name: "sesja-server", password: String(f.get("password") || ""), hostname: String(f.get("hostname") || "") });
+      CLOUD.result = r;
+      S.cfg = await invoke("save_config", { cfg: { ...S.cfg, cloud_url: r.url, password: String(f.get("password") || "") } });
+      toast({ title: t("cloud_done_t"), text: r.url });
+    } catch (err) { fail(err); }
+    CLOUD.busy = false;
+    if (S.view === "cloud") {
+      renderView(false);
+      $(".cloud-done")?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+    }
+  });
+};
 
 function hostPanel() {
   const a = S.host.addresses || [];
@@ -801,12 +886,12 @@ REFRESH.studio = () => {
     errBox.dataset.err = (s.error || "") + s.status;
     errBox.innerHTML = errHtml;
   }
-  $("#people").innerHTML = peopleHtml(s);
+  setHTML($("#people"), peopleHtml(s));
   const n = mergedUsers(s.users).length;
   $("#people-n").textContent = n ? String(n) : "";
-  $("#tracks").innerHTML = tracksHtml(s);
+  setHTML($("#tracks"), tracksHtml(s));
   $("#tracks-n").textContent = s.tracks.length ? String(s.tracks.length) : "";
-  $("#feed").innerHTML = feedHtml(s);
+  setHTML($("#feed"), feedHtml(s));
   const pill = document.querySelector(".room-sub .pill");
   if (pill) pill.innerHTML = `<span class="dot ${s.status}"></span>${statusLabel(s.status)}`;
 };
@@ -856,7 +941,8 @@ RENDER.guide = () => {
     </ol>
     <div class="guide-grid">
       <section class="panel"><h2>${t("g_vps_t")}</h2><p class="muted">${t("g_vps_d")}</p>
-        <button class="btn ghost" style="margin-top:12px" data-url="${LINKS.repo}/tree/main/server/cloudflare">${icon("server")}${t("g_vps_btn")}</button></section>
+        <div class="row" style="margin-top:12px"><button class="btn primary" data-view="cloud">${icon("server")}${t("cloud_create")}</button>
+        <button class="btn ghost" data-url="${LINKS.repo}/tree/main/server/cloudflare">${t("g_vps_btn")}</button></div></section>
       <section class="panel"><h2>${t("g_lan_t")}</h2><p class="muted">${t("g_lan_d")}</p></section>
       <section class="panel"><h2>${t("g_fix_t")}</h2><div class="md"><ul><li>${t("g_fix_1")}</li><li>${t("g_fix_2")}</li><li>${t("g_fix_3")}</li></ul></div></section>
     </div>`;
@@ -886,8 +972,7 @@ REFRESH.chat = () => {
   const box = $("#msgs");
   if (!box) return renderView(false);
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
-  box.innerHTML = msgsHtml(S.session);
-  if (atBottom) box.scrollTop = box.scrollHeight;
+  if (setHTML(box, msgsHtml(S.session)) && atBottom) box.scrollTop = box.scrollHeight;
 };
 AFTER.chat = () => {
   if (!S.session) return;
@@ -1046,6 +1131,9 @@ REFRESH.comments = () => {
   const box = $("#cmts");
   if (!box) return renderView(false);
   const list = [...S.session.comments].reverse();
+  const key = list.map((c) => c.id).join(",");
+  if (box.dataset.key === key) return; // nic nowego – nie przebudowuj listy
+  box.dataset.key = key;
   box.innerHTML = list.length ? list.map((c) => `
     <div class="cmt"><div class="avatar" style="background:${esc(colorOf(c.user))}">${initial(c.user)}</div>
       <div><div class="where">${c.item_name ? `${th("clip_n", { name: c.item_name })} · ` : ""}${fmtPos(c.pos)}</div>
@@ -1267,6 +1355,14 @@ async function connect() {
 }
 
 const ACTIONS = {
+  async "cloud-join"() {
+    try {
+      S.cfg = await invoke("save_config", { cfg: { ...S.cfg, server: S.cfg.cloud_url } });
+      await connect();
+      go("studio");
+      renderView(true);
+    } catch (e) { fail(e); }
+  },
   async reconnect(btn) {
     btn.disabled = true;
     btn.innerHTML = `<div class="spinner"></div>${t("st_connecting")}`;
@@ -1495,8 +1591,64 @@ function drawMeter() {
   }
 }
 
+/* ------------------------------------------------------------------ zorza w tle
+   Miękkie plamy światła dryfują powoli; aktywność innych osób je rozjaśnia.
+   Rysujemy na małej kanwie (tanie) – CSS rozmywa ją do gładkiej poświaty. */
+const AURORA = { raf: 0, t: 0 };
+const BLOBS = [
+  { c: [243, 167, 59], x: 0.78, y: 0.12, r: 0.42, sx: 0.07, sy: 0.05, p: 0 },
+  { c: [95, 201, 181], x: 0.18, y: 0.85, r: 0.38, sx: 0.05, sy: 0.06, p: 2 },
+  { c: [120, 90, 220], x: 0.55, y: 0.6, r: 0.33, sx: 0.06, sy: 0.04, p: 4 },
+  { c: [240, 82, 79], x: 0.92, y: 0.9, r: 0.22, sx: 0.04, sy: 0.05, p: 1 },
+];
+function startAurora() {
+  const cv = $("#aurora");
+  if (!cv || reduceMotion || AURORA.raf) return;
+  const ctx = cv.getContext("2d");
+  let last = 0;
+  const loop = (now) => {
+    AURORA.raf = document.hidden ? 0 : requestAnimationFrame(loop);
+    if (now - last < 33) return; // ~30 kl./s wystarczy na tak wolny ruch
+    const dt = last ? (now - last) / 1000 : 0;
+    last = now;
+    AURORA.t += dt;
+    const w = (cv.width = 160), h = (cv.height = 100);
+    ctx.clearRect(0, 0, w, h);
+    const boost = 0.55 + LIVE.level * 0.6;
+    for (const b of BLOBS) {
+      const x = (b.x + Math.sin(AURORA.t * b.sx + b.p) * 0.12) * w;
+      const y = (b.y + Math.cos(AURORA.t * b.sy + b.p) * 0.1) * h;
+      const r = b.r * w;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, `rgba(${b.c.join(",")},${0.32 * boost})`);
+      g.addColorStop(1, `rgba(${b.c.join(",")},0)`);
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    }
+  };
+  AURORA.raf = requestAnimationFrame(loop);
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden) startAurora(); });
+
+/* reflektor pod kursorem na kartach */
+let spotRaf = 0, spotEv = null;
+document.addEventListener("pointermove", (e) => {
+  spotEv = e;
+  if (spotRaf) return;
+  spotRaf = requestAnimationFrame(() => {
+    spotRaf = 0;
+    const el = spotEv.target.closest?.(".panel, .clip, .step, .cmt, .donate button");
+    if (!el) return;
+    el.classList.add("spot");
+    const r = el.getBoundingClientRect();
+    el.style.setProperty("--mx", `${spotEv.clientX - r.left}px`);
+    el.style.setProperty("--my", `${spotEv.clientY - r.top}px`);
+  });
+}, { passive: true });
+
 /* ------------------------------------------------------------------ start */
 function startApp() {
+  startAurora();
   $("#shell").hidden = false;
   renderNav();
   renderConn();
@@ -1512,6 +1664,11 @@ async function boot() {
   if (!cfg.lang) S.cfg = await invoke("save_config", { cfg: { ...cfg, lang: lang() } });
   applyStaticTexts();
   await listen("session", onSession);
+  await listen("cloud-progress", (p) => {
+    CLOUD.steps[p.step] = { state: p.state, detail: p.detail };
+    const box = $("#cloud-progress");
+    if (box) { box.hidden = false; box.innerHTML = cloudProgressHtml(); }
+  });
   await listen("update-progress", ([done, total]) => {
     const el = document.querySelector(".toast .progress i");
     if (el && total) el.style.width = `${Math.round((done / total) * 100)}%`;
