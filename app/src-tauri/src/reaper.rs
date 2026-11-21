@@ -250,6 +250,7 @@ pub struct Conn<'a> {
     pub ask: bool,
     /// Nazwa sesji z „Utwórz sesję” (pokój to wtedy losowy kod).
     pub name: &'a str,
+    pub admin: &'a str,
 }
 
 pub fn install(resource: &str, autostart: bool, conn: Option<Conn>) -> Result<InstallReport, String> {
@@ -362,8 +363,8 @@ pub fn write_handoff(res: &Path, c: &Conn, join: bool) -> Result<(), String> {
         .map(|d| d.as_millis())
         .unwrap_or(0);
     let body = format!(
-        "server={}\nroom={}\nuser={}\npassword={}\nlang={}\nask_tracks={}\njoin={}\nname={}\nstamp={stamp}\n",
-        c.server, c.room, c.user, c.password, c.lang, if c.ask { "1" } else { "0" }, if join { "1" } else { "0" }, c.name.replace(['\r', '\n'], " ")
+        "server={}\nroom={}\nuser={}\npassword={}\nlang={}\nask_tracks={}\njoin={}\nname={}\nadmin={}\nstamp={stamp}\n",
+        c.server, c.room, c.user, c.password, c.lang, if c.ask { "1" } else { "0" }, if join { "1" } else { "0" }, c.name.replace(['\r', '\n'], " "), c.admin
     );
     std::fs::write(dir.join("session.txt"), body).map_err(|e| tf("write_failed", &[&"session.txt", &e]))
 }
@@ -381,6 +382,7 @@ pub fn write_settings(res: &Path, c: &Conn) -> Result<(), String> {
         ("lang", c.lang),
         ("ask_tracks", if c.ask { "1" } else { "0" }),
         ("room_name", c.name),
+        ("admin_key", c.admin),
     ];
     let mut out: Vec<String> = Vec::new();
     let mut in_ours = false;
@@ -448,7 +450,7 @@ mod tests {
             "[Other]\na=1\n[ReaperMultiplayer]\nuser=stary\ncolorize=0\n",
         )
         .unwrap();
-        let conn = Conn { server: "http://1.2.3.4:8765", room: "pokoj", user: "Ania", password: "x", lang: "en", ask: true, name: "" };
+        let conn = Conn { server: "http://1.2.3.4:8765", room: "pokoj", user: "Ania", password: "x", lang: "en", ask: true, name: "", admin: "" };
         let rep = install(dir.to_str().unwrap(), true, Some(conn)).unwrap();
         assert!(rep.info.script_installed);
         assert!(rep.info.autostart);

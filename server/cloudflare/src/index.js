@@ -8,7 +8,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 
-const VERSION = "1.2.0";
+const VERSION = "1.3.0";
 const SAFE = /^[A-Za-z0-9._~-]{1,200}$/;
 const MAX_OPS_PER_RESPONSE = 400;
 const MAX_LOG = 5000; // ile operacji trzymamy (starsze -> klient robi pełną synchronizację)
@@ -16,6 +16,18 @@ const MAX_CHAT = 500;
 const ONLINE_TIMEOUT = 15; // s
 const CHUNK = 1024 * 1024; // kawałek pliku audio w bazie
 const MAX_UPLOAD = 95 * 1024 * 1024; // limit żądania w Workers to 100 MB
+// Duże pliki (np. bit w WAV) przychodzą w częściach po 8 MiB: brak limitu rozmiaru,
+// postęp i ponawianie pojedynczych części zamiast całego pliku.
+const PART = 8 * 1024 * 1024;
+const MAX_FILE = 2 * 1024 * 1024 * 1024; // 2 GiB na plik
+// ochrona przed spamem
+const MAX_USERS = 20; // osób naraz w jednej sesji
+const MAX_OPS_IN = 2000; // operacji w jednym żądaniu
+const MAX_TEXT = 2000; // znaków w wiadomości / komentarzu
+const CHAT_BURST = 10, CHAT_WINDOW = 20; // max 10 wiadomości na 20 s na osobę
+const REQ_BURST = 120, REQ_WINDOW = 10; // max 120 żądań na 10 s na połączenie
+const ROOMS_PER_HOUR = 20; // nowych sesji z jednego adresu IP
+const DECISIONS = new Set(["req_ok", "req_no", "draft_ok", "draft_no"]);
 const PALETTE = [
   "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231", "#911eb4", "#46f0f0", "#f032e6",
   "#bcf60c", "#fabebe", "#008080", "#e6beff", "#9a6324", "#fffac8", "#aaffc3", "#ffd8b1",
@@ -81,13 +93,19 @@ async function createRoom(request, env, url) {
   if (!name) return err(400, "bad_name", "Session name is required");
   const password = String(b.password || "");
   if (password.length > 200) return err(400, "bad_password", "Password too long");
+  // limit zakładania sesji z jednego adresu
+  const ip = request.headers.get("CF-Connecting-IP") || "local";
+  const lim = await env.ROOMS.get(env.ROOMS.idFromName("__limit:" + ip)).fetch("https://room/__limit", { method: "POST" });
+  if (lim.status === 429) return err(429, "slow_down", "Too many new sessions, try again later");
+  // klucz gospodarza: tylko twórca sesji go dostaje – daje prawa administratora
+  const adminKey = [...crypto.getRandomValues(new Uint8Array(18))].map((x) => CODE_ABC[x % CODE_ABC.length]).join("");
   for (let i = 0; i < 4; i++) {
     const code = newCode();
     const stub = env.ROOMS.get(env.ROOMS.idFromName(code));
-    const r = await stub.fetch("https://room/__init", { method: "POST", body: JSON.stringify({ name, password }) });
+    const r = await stub.fetch("https://room/__init", { method: "POST", body: JSON.stringify({ name, password, adminKey }) });
     if (r.status === 409) continue;
     const link = `${url.origin}/s/${code}`;
-    return json({ ok: true, room: code, name, link, server: url.origin, has_password: !!password });
+    return json({ ok: true, room: code, name, link, server: url.origin, has_password: !!password, admin_key: adminKey });
   }
   return err(500, "busy", "Could not create a session, try again");
 }
@@ -136,6 +154,11 @@ export default {
 };
 
 const pad = (n) => String(n).padStart(12, "0");
+// nazwa ścieżki / klipu z fragmentu stanu REAPERa (pierwsza linia NAME)
+function chunkName(chunk) {
+  const m = String(chunk || "").match(/^\s*NAME\s+(?:"([^"]*)"|(\S+))/m);
+  return m ? (m[1] ?? m[2] ?? "") : "";
+}
 
 export class Room extends DurableObject {
   constructor(ctx, env) {
@@ -154,18 +177,32 @@ export class Room extends DurableObject {
     this.comments = strip(await st.list({ prefix: "c:" }), "c:");
     this.order = (await st.get("order")) || [];
     this.tempo = (await st.get("tempo")) || null;
+    this.proj = strip(await st.list({ prefix: "p:" }), "p:"); // master, markery, mapa tempa
     this.chat = (await st.get("chat")) || [];
     const logs = await st.list({ prefix: "log:", reverse: true, limit: MAX_LOG });
     this.log = [...logs.values()].reverse();
     this.floor = this.log.length ? this.log[0].seq - 1 : this.seq;
-    this.room = (await st.get("room")) || null; // {name, salt, hash, created} – sesja założona z linkiem
+    this.room = (await st.get("room")) || null; // {name, salt, hash, adminHash, created} – sesja założona z linkiem
+    this.requests = strip(await st.list({ prefix: "req:" }), "req:"); // prośby edytorów o usunięcie
+    this.rate = new Map(); // cid -> {hits: [], chats: []}
+  }
+
+  // role: sesja z linkiem ma gospodarza (klucz z „Utwórz sesję”); starsze pokoje – wszyscy równi
+  get roles() { return !!this.room?.adminHash; }
+  async isAdmin(request) {
+    if (!this.roles) return true;
+    const k = request.headers.get("X-Sesja-Admin") || "";
+    return !!k && (await sha256(this.room.salt + ":a:" + k)) === this.room.adminHash;
   }
 
   async init(request) {
     if (this.room) return err(409, "exists", "Session exists");
     const b = await request.json();
     const salt = [...crypto.getRandomValues(new Uint8Array(12))].map((x) => x.toString(16).padStart(2, "0")).join("");
-    this.room = { name: b.name, salt, hash: b.password ? await sha256(salt + ":" + b.password) : "", created: now() };
+    this.room = {
+      name: b.name, salt, hash: b.password ? await sha256(salt + ":" + b.password) : "",
+      adminHash: b.adminKey ? await sha256(salt + ":a:" + b.adminKey) : "", created: now(),
+    };
     await this.ctx.storage.put("room", this.room);
     return json({ ok: true });
   }
@@ -186,23 +223,99 @@ export class Room extends DurableObject {
     const url = new URL(request.url);
     const m = request.method;
     if (url.pathname === "/__init" && m === "POST") return this.init(request);
+    if (url.pathname === "/__limit") {
+      const t = now();
+      this.hits = (this.hits || []).filter((x) => t - x < 3600);
+      if (this.hits.length >= ROOMS_PER_HOUR) return err(429, "slow_down", "Too many");
+      this.hits.push(t);
+      return json({ ok: true });
+    }
     if (url.pathname === "/api/room") {
       return json({ ok: true, exists: !!this.room, name: this.room?.name || null, has_password: !!this.room?.hash });
     }
     const denied = await this.guard(request);
     if (denied) return denied;
-    if (url.pathname === "/api/state" && m === "GET") return this.state();
+    if (url.pathname === "/api/state" && m === "GET") return this.state(request);
     if (url.pathname === "/api/sync" && m === "POST") return this.sync(request);
-    if (url.pathname === "/api/file" && m === "PUT") return this.putFile(request, url.searchParams.get("id"));
+    if (url.pathname === "/api/file" && m === "PUT") {
+      const part = url.searchParams.get("part");
+      if (part !== null) return this.putPart(request, url.searchParams.get("id"), +part, +url.searchParams.get("parts"));
+      return this.putFile(request, url.searchParams.get("id"));
+    }
     if (url.pathname === "/api/file" && m === "GET") return this.getFile(url.searchParams.get("id"));
     return err(404, "not_found", "Unknown endpoint");
   }
 
-  state() {
+  // rola, prośby o usunięcie i szkice – wysyłane przy każdej synchronizacji
+  review(admin) {
+    if (!this.roles) return { role: "admin", roles: false, requests: [], drafts: [] };
+    const drafts = [];
+    for (const [guid, tr] of this.tracks) if (tr.draft && drafts.length < 300) drafts.push({ kind: "track", guid, user: tr.author, name: chunkName(tr.chunk) });
+    for (const [guid, it] of this.items) if (it.draft && drafts.length < 300) drafts.push({ kind: "item", guid, user: it.author, name: chunkName(it.chunk), track: it.track });
+    return { role: admin ? "admin" : "editor", roles: true, requests: [...this.requests.values()], drafts };
+  }
+
+  addRequest(op, target, put) {
+    for (const r of this.requests.values()) if (r.t === op.t && r.guid === op.guid) return; // już czeka
+    const id = "r" + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+    const r = { id, t: op.t, guid: op.guid, user: op.user, ts: op.ts, name: chunkName(target.chunk), track: target.track || null };
+    this.requests.set(id, r);
+    put["req:" + id] = r;
+  }
+
+  // decyzje gospodarza; zwraca operacje do zapisania w logu (wszyscy je dostaną)
+  decide(op, put, del) {
+    const out = [], ts = now(), by = op.user;
+    const emitState = (kind, guid) => {
+      const e = kind === "track" ? this.tracks.get(guid) : this.items.get(guid);
+      if (!e) return;
+      const o = { t: kind, guid, chunk: e.chunk, user: e.editor, cid: "server", ts, restored: true };
+      if (kind === "item") o.track = e.track;
+      if (e.draft) o.draft = true;
+      out.push(o);
+    };
+    if (op.t === "req_ok" || op.t === "req_no") {
+      const r = this.requests.get(op.id);
+      if (!r) return out;
+      this.requests.delete(op.id);
+      del.push("req:" + op.id);
+      if (op.t === "req_ok") {
+        const d = { t: r.t, guid: r.guid, user: r.user, cid: "server", ts, by };
+        if (this.applyOp(d, put, del)) out.push(d);
+      } else if (r.t === "item_del") {
+        emitState("item", r.guid); // przywróć klip u osoby, która go usunęła
+      } else {
+        emitState("track", r.guid);
+        for (const [ig, it] of this.items) if (it.track === r.guid) emitState("item", ig);
+        out.push({ t: "order", list: this.order, user: by, cid: "server", ts });
+      }
+      out.push({ t: op.t, id: op.id, guid: r.guid, kind: r.t, name: r.name, who: r.user, user: by, cid: op.cid, ts });
+    } else {
+      const g = op.guid;
+      const kind = this.tracks.has(g) ? "track" : this.items.has(g) ? "item" : null;
+      if (!kind) return out;
+      const e = kind === "track" ? this.tracks.get(g) : this.items.get(g);
+      if (!e.draft) return out;
+      if (op.t === "draft_ok") {
+        delete e.draft;
+        put[(kind === "track" ? "t:" : "i:") + g] = e;
+        out.push({ t: "draft_ok", guid: g, kind, name: chunkName(e.chunk), who: e.author, user: by, cid: op.cid, ts });
+      } else {
+        const d = { t: kind + "_del", guid: g, user: e.author, cid: "server", ts, by };
+        if (this.applyOp(d, put, del)) out.push(d);
+        out.push({ t: "draft_no", guid: g, kind, name: chunkName(e.chunk), who: e.author, user: by, cid: op.cid, ts });
+      }
+    }
+    return out;
+  }
+
+  async state(request) {
+    const review = this.review(await this.isAdmin(request));
     return json({
+      ...review,
       ok: true, seq: this.seq,
       tracks: Object.fromEntries(this.tracks), items: Object.fromEntries(this.items),
-      order: this.order, tempo: this.tempo,
+      order: this.order, tempo: this.tempo, proj: Object.fromEntries(this.proj),
       comments: [...this.comments.values()], chat: this.chat.slice(-200),
     });
   }
@@ -215,6 +328,7 @@ export class Room extends DurableObject {
         if (!g) return false;
         const prev = this.tracks.get(g);
         const v = { chunk: String(op.chunk || ""), author: prev ? prev.author : user, created: prev ? prev.created : ts, editor: user, ts };
+        if (prev ? prev.draft : op.draft) v.draft = true;
         this.tracks.set(g, v);
         put["t:" + g] = v;
         if (!this.order.includes(g)) { this.order.push(g); put.order = this.order; }
@@ -232,6 +346,7 @@ export class Room extends DurableObject {
         if (!g) return false;
         const prev = this.items.get(g);
         const v = { chunk: String(op.chunk || ""), track: op.track, author: prev ? prev.author : user, created: prev ? prev.created : ts, editor: user, ts };
+        if (prev ? prev.draft : op.draft) v.draft = true;
         this.items.set(g, v);
         put["i:" + g] = v;
         return true;
@@ -247,9 +362,16 @@ export class Room extends DurableObject {
         this.tempo = { bpm: op.bpm, user, ts };
         put.tempo = this.tempo;
         return true;
+      case "proj": {
+        if (!["master", "markers", "tempomap"].includes(op.key)) return false;
+        const v = { data: String(op.data ?? "").slice(0, 2000000), user, ts };
+        this.proj.set(op.key, v);
+        put["p:" + op.key] = v;
+        return true;
+      }
       case "comment": {
         if (!op.id) return false;
-        const c = { id: op.id, pos: Number(op.pos) || 0, text: String(op.text || ""), user, ts, item: op.item ?? null, itemName: op.itemName ?? null };
+        const c = { id: op.id, pos: Number(op.pos) || 0, text: String(op.text || "").slice(0, MAX_TEXT), user, ts, item: op.item ?? null, itemName: op.itemName ?? null };
         this.comments.set(op.id, c);
         put["c:" + op.id] = c;
         return true;
@@ -259,7 +381,7 @@ export class Room extends DurableObject {
         del.push("c:" + op.id);
         return true;
       case "chat":
-        this.chat.push({ user, text: String(op.text || ""), ts });
+        this.chat.push({ user, text: String(op.text || "").slice(0, MAX_TEXT), ts });
         if (this.chat.length > MAX_CHAT) this.chat = this.chat.slice(-MAX_CHAT);
         put.chat = this.chat;
         return true;
@@ -281,18 +403,48 @@ export class Room extends DurableObject {
     const user = String(b.user || "anon").slice(0, 40);
     const cid = String(b.cid || "").slice(0, 64);
     const since = Number.isFinite(+b.since) ? +b.since : 0;
-    this.users.set(cid, { name: user, last: now(), presence: b.presence || {} });
+    const admin = await this.isAdmin(request);
+    // ochrona przed zalewaniem: limit żądań na połączenie i miejsc w sesji
+    const t0 = now();
+    const rl = this.rate.get(cid) || { hits: [], chats: [] };
+    rl.hits = rl.hits.filter((x) => t0 - x < REQ_WINDOW);
+    if (rl.hits.length >= REQ_BURST) return err(429, "slow_down", "Too many requests");
+    rl.hits.push(t0);
+    this.rate.set(cid, rl);
+    if (!this.users.has(cid) && (await this.online()).length >= MAX_USERS) return err(403, "room_full", "Session is full");
+    this.users.set(cid, { name: user, last: t0, presence: b.presence || {}, admin });
 
-    const ops = Array.isArray(b.ops) ? b.ops : [];
+    const ops = (Array.isArray(b.ops) ? b.ops : []).slice(0, MAX_OPS_IN);
     if (ops.length) {
       const put = {}, del = [];
+      const log = (op) => { op.seq = ++this.seq; this.log.push(op); put["log:" + pad(op.seq)] = op; };
       for (const raw of ops) {
         if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
         const op = { ...raw, user, cid, ts: now() };
+        if (op.t === "chat") {
+          rl.chats = rl.chats.filter((x) => op.ts - x < CHAT_WINDOW);
+          if (rl.chats.length >= CHAT_BURST) continue; // zalew wiadomości – pomijamy
+          rl.chats.push(op.ts);
+        }
+        if (typeof op.text === "string") op.text = op.text.slice(0, MAX_TEXT);
+        if (DECISIONS.has(op.t)) {
+          if (admin) for (const out of this.decide(op, put, del)) log(out);
+          continue;
+        }
+        if (!admin) {
+          if (op.t === "track_del" || op.t === "item_del") {
+            const target = op.t === "track_del" ? this.tracks.get(op.guid) : this.items.get(op.guid);
+            if (!target) continue;
+            // własny szkic edytor usuwa sam; resztę zatwierdza gospodarz
+            if (!(target.draft && target.author === user)) { this.addRequest(op, target, put); continue; }
+          }
+          if (op.t === "track" && !this.tracks.has(op.guid)) op.draft = true;
+          if (op.t === "item" && !this.items.has(op.guid)) op.draft = true;
+        } else {
+          delete op.draft;
+        }
         if (!this.applyOp(op, put, del)) continue;
-        op.seq = ++this.seq;
-        this.log.push(op);
-        put["log:" + pad(op.seq)] = op;
+        log(op);
       }
       if (this.log.length > MAX_LOG) {
         const cut = this.log.splice(0, this.log.length - MAX_LOG);
@@ -303,7 +455,7 @@ export class Room extends DurableObject {
       await this.persist(put, del);
     }
 
-    const resp = { ok: true, seq: this.seq, users: await this.online(), color: await userColor(user) };
+    const resp = { ok: true, seq: this.seq, users: await this.online(), color: await userColor(user), parts: PART, ...this.review(admin) };
     if (since < this.floor) {
       resp.resync = true;
       resp.ops = [];
@@ -333,7 +485,7 @@ export class Room extends DurableObject {
     for (const [cid, u] of this.users) {
       if (t - u.last > ONLINE_TIMEOUT) { this.users.delete(cid); continue; }
       const p = u.presence || {};
-      out.push({ cid, name: u.name, color: await userColor(u.name), pos: Number(p.pos) || 0, play: !!p.play, rec: !!p.rec, sel: String(p.sel || ""), app: !!p.app });
+      out.push({ cid, name: u.name, color: await userColor(u.name), pos: Number(p.pos) || 0, play: !!p.play, rec: !!p.rec, sel: String(p.sel || ""), app: !!p.app, admin: this.roles && !!u.admin });
     }
     return out;
   }
@@ -362,6 +514,43 @@ export class Room extends DurableObject {
     // metadane zapisujemy na końcu – niedokończony plik nigdy nie jest „dostępny”
     await st.put("fm:" + id, { size: total, chunks: n });
     return json({ ok: true, id, size: total });
+  }
+
+  async putPart(request, id, part, parts) {
+    if (!id || !SAFE.test(id)) return err(400, "bad_name", "Invalid file name");
+    const size = Number((id.match(/~(\d+)~[0-9a-f]+/) || [])[1]);
+    if (!(size > 0) || size > MAX_FILE) return err(400, "bad_upload", "Invalid file size");
+    const want = Math.ceil(size / PART);
+    if (parts !== want || !Number.isInteger(part) || part < 0 || part >= parts) return err(400, "bad_upload", "Invalid part");
+    const len = part === parts - 1 ? size - part * PART : PART;
+    if (Number(request.headers.get("Content-Length")) !== len || !request.body) return err(400, "bad_upload", "Invalid part length");
+    const st = this.ctx.storage;
+    if (await st.get("fm:" + id)) return json({ ok: true, id, part, done: true }); // już jest
+    const per = PART / CHUNK, base = part * per;
+    const reader = request.body.getReader();
+    let buf = new Uint8Array(CHUNK), fill = 0, n = 0, total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      let off = 0;
+      while (off < value.length) {
+        const take = Math.min(CHUNK - fill, value.length - off);
+        buf.set(value.subarray(off, off + take), fill);
+        fill += take; off += take; total += take;
+        if (fill === CHUNK) { await st.put(`f:${id}:${base + n++}`, buf); buf = new Uint8Array(CHUNK); fill = 0; }
+      }
+    }
+    if (fill) await st.put(`f:${id}:${base + n++}`, buf.slice(0, fill));
+    if (total !== len) return err(400, "bad_upload", "Upload interrupted");
+    const got = new Set((await st.get("fp:" + id)) || []);
+    got.add(part);
+    if (got.size < parts) {
+      await st.put("fp:" + id, [...got]);
+      return json({ ok: true, id, part, done: false, have: got.size, parts });
+    }
+    await st.delete("fp:" + id);
+    await st.put("fm:" + id, { size, chunks: Math.ceil(size / CHUNK) });
+    return json({ ok: true, id, part, done: true, size });
   }
 
   async getFile(id) {

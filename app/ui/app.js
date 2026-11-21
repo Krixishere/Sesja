@@ -627,6 +627,7 @@ RENDER.studio = () => {
         <canvas class="room-wave" id="room-wave" aria-hidden="true"></canvas>
         <div class="room-sub">
           <span class="pill"><span class="dot ${s.status}"></span>${statusLabel(s.status)}</span>
+          ${s.roles ? `<span class="tag ${s.role === "admin" ? "tag-host" : "tag-editor"}">${t(s.role === "admin" ? "role_admin" : "role_editor")}</span>` : ""}
           <span>${esc(s.server)}</span>
         </div>
       </div>
@@ -638,6 +639,7 @@ RENDER.studio = () => {
     <div id="studio-error">${errorNotice(s)}</div>
     <div id="fw-box">${firewallNotice()}</div>
     ${S.cfg.room === s.room ? invitePanel() : ""}
+    <div id="review">${reviewHtml(s)}</div>
     <div class="studio-grid">
       <div class="stack">
         <section class="panel"><h2>${t("in_session")} <span class="muted" id="people-n"></span></h2><div class="people" id="people"></div></section>
@@ -796,7 +798,9 @@ function bindStudioForms() {
     const done = busyBtn($("#create-go"), t("creating"));
     try {
       const r = await invoke("room_create", { server: S.publicServer, name, password });
-      await enterSession({ server: r.server || S.publicServer, room: r.room, password, room_name: r.name });
+      const keys = { ...(S.cfg.admin_keys || {}) };
+      if (r.admin_key) keys[r.room] = r.admin_key;
+      await enterSession({ server: r.server || S.publicServer, room: r.room, password, room_name: r.name, admin_keys: keys });
       navigator.clipboard?.writeText(r.link).catch(() => {});
       toast({ title: t("session_created"), text: r.link, timeout: 8000 });
     } catch (err) { fail(err); done(); }
@@ -900,6 +904,7 @@ function mergedUsers(users) {
   for (const u of users || []) {
     let e = by.get(u.name);
     if (!e) by.set(u.name, (e = { name: u.name, color: u.color, reaper: false, app: false, pos: 0 }));
+    if (u.admin) e.admin = true;
     if (u.app) e.app = true;
     else Object.assign(e, { reaper: true, pos: u.pos, play: u.play, rec: u.rec, sel: u.sel });
   }
@@ -914,19 +919,46 @@ function peopleHtml(s) {
       : u.rec ? `<span class="state rec">${th("recording_at", { pos: fmtPos(u.pos) })}</span>`
       : u.play ? `<span class="state"><span class="eq" aria-hidden="true"><i></i><i></i><i></i></span>${fmtPos(u.pos)}</span>`
       : `<span class="state num">${fmtPos(u.pos)}</span>`;
-    const badges = `${u.reaper ? `<span class="tag tag-reaper">REAPER</span>` : ""}${u.app ? `<span class="tag tag-app">Sesja</span>` : ""}`;
+    const badges = `${u.admin ? `<span class="tag tag-host">${t("role_admin")}</span>` : ""}${u.reaper ? `<span class="tag tag-reaper">REAPER</span>` : ""}${u.app ? `<span class="tag tag-app">Sesja</span>` : ""}`;
     const where = u.sel ? th("on_track", { name: u.sel }) : u.reaper ? t("in_reaper") : t("in_app_long");
     return `<div class="person ${u.rec ? "is-rec" : ""}"><div class="avatar" style="background:${esc(u.color)}">${initial(u.name)}</div>
       <div><b>${esc(u.name)}${u.name === s.me ? ` (${t("you")})` : ""} ${badges}</b><small>${where}</small></div>${state}</div>`;
   }).join("");
 }
 
+/* Gospodarz decyduje o prośbach o usunięcie i o szkicach; edytor widzi, co czeka. */
+function reviewHtml(s) {
+  if (!s?.roles) return "";
+  const reqs = s.requests || [], drafts = s.drafts || [];
+  const nm = (x) => esc(x.name || t("no_name"));
+  if (s.role !== "admin") {
+    const mineD = drafts.filter((d) => d.user === s.me).length, mineR = reqs.filter((r) => r.user === s.me).length;
+    if (!mineD && !mineR) return "";
+    return `<div class="notice review-wait"><div class="spinner"></div><span>${th("review_wait", { d: mineD, r: mineR })}</span></div>`;
+  }
+  if (!reqs.length && !drafts.length) return "";
+  const rows = [
+    ...reqs.map((r) => `<div class="rv-row rv-del"><span class="rv-ic">${icon("x")}</span>
+      <div><b>${th("rv_del", { name: esc(r.user), kind: t(r.t === "track_del" ? "rv_track" : "rv_clip"), what: nm(r) })}</b></div>
+      <div class="row"><button class="btn danger sm" data-decide="req_ok" data-id="${esc(r.id)}">${t("rv_delete")}</button>
+      <button class="btn ghost sm" data-decide="req_no" data-id="${esc(r.id)}">${t("rv_keep")}</button></div></div>`),
+    ...drafts.slice(0, 30).map((d) => `<div class="rv-row"><span class="rv-ic ok">${icon(d.kind === "track" ? "studio" : "music")}</span>
+      <div><b>${nm(d)}</b><small>${th("rv_draft_by", { kind: t(d.kind === "track" ? "rv_track1" : "rv_clip1"), name: esc(d.user) })}</small></div>
+      <div class="row"><button class="btn primary sm" data-decide="draft_ok" data-id="${esc(d.guid)}">${t("rv_accept")}</button>
+      <button class="btn ghost sm" data-decide="draft_no" data-id="${esc(d.guid)}">${t("rv_reject")}</button></div></div>`),
+  ].join("");
+  return `<section class="panel review"><h2>${icon("check", "width:18px;height:18px;color:var(--signal)")}${t("rv_title")} <span class="muted">${reqs.length + drafts.length}</span>
+    ${drafts.length > 1 ? `<button class="btn ghost sm" data-decide="draft_all">${th("rv_accept_all", { n: drafts.length })}</button>` : ""}</h2>
+    <div class="rv-list">${rows}</div></section>`;
+}
+
 function tracksHtml(s) {
   if (!s.tracks.length) return `<div class="empty">${t("tracks_empty")}</div>`;
   const count = {};
   for (const it of s.items) count[it.track] = (count[it.track] || 0) + 1;
-  return s.tracks.map((tr) => `<div class="track"><div class="bar" style="background:${esc(colorOf(tr.author))}"></div>
-    <div><b>${esc(tr.name)}</b><small>${th("author_n", { name: tr.author })}${tr.editor && tr.editor !== tr.author ? ` · ${th("edited_by", { name: tr.editor })}` : ""}</small></div>
+  const drafts = new Set((s.drafts || []).map((d) => d.guid));
+  return s.tracks.map((tr) => `<div class="track ${drafts.has(tr.guid) ? "is-draft" : ""}"><div class="bar" style="background:${esc(colorOf(tr.author))}"></div>
+    <div><b>${esc(tr.name)}${drafts.has(tr.guid) ? ` <span class="tag tag-draft">${t("draft")}</span>` : ""}</b><small>${th("author_n", { name: tr.author })}${tr.editor && tr.editor !== tr.author ? ` · ${th("edited_by", { name: tr.editor })}` : ""}</small></div>
     <span class="n num">${tn("clips", count[tr.guid] || 0)}</span></div>`).join("");
 }
 
@@ -994,6 +1026,7 @@ REFRESH.studio = () => {
     errBox.dataset.err = (s.error || "") + s.status;
     errBox.innerHTML = errHtml;
   }
+  setHTML($("#review"), reviewHtml(s));
   setHTML($("#people"), peopleHtml(s));
   const n = mergedUsers(s.users).length;
   $("#people-n").textContent = n ? String(n) : "";
@@ -1572,9 +1605,16 @@ const ACTIONS = {
 };
 
 document.addEventListener("click", (e) => {
-  const el = e.target.closest("[data-view],[data-act],[data-ob],[data-url],[data-copy],[data-play],[data-filter],[data-del-comment],[data-step],canvas.wave");
+  const el = e.target.closest("[data-view],[data-decide],[data-act],[data-ob],[data-url],[data-copy],[data-play],[data-filter],[data-del-comment],[data-step],canvas.wave");
   if (!el) return;
   if (el.dataset.view) return go(el.dataset.view);
+  if (el.dataset.decide) {
+    const s = S.session;
+    const list = el.dataset.decide === "draft_all" ? (s?.drafts || []).map((d) => ["draft_ok", d.guid]) : [[el.dataset.decide, el.dataset.id]];
+    el.closest(".rv-row")?.classList.add("leaving");
+    for (const [tt, id] of list) invoke("session_decide", { t: tt, id }).catch(fail);
+    return;
+  }
   if (el.dataset.act) return ACTIONS[el.dataset.act]?.(el);
   if (el.dataset.ob) return obAction(el.dataset.ob, el);
   if (el.dataset.url) { e.preventDefault(); return invoke("open_url", { url: el.dataset.url }).catch(fail); }

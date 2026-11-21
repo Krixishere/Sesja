@@ -53,6 +53,8 @@ struct Room {
     items: Map<String, Value>,
     order: Vec<Value>,
     tempo: Value,
+    /// master z efektami, markery/regiony, mapa tempa
+    proj: Map<String, Value>,
     comments: Map<String, Value>,
     chat: Vec<Value>,
     users: HashMap<String, User>,
@@ -71,6 +73,7 @@ impl Room {
                 r.items = d["items"].as_object().cloned().unwrap_or_default();
                 r.order = d["order"].as_array().cloned().unwrap_or_default();
                 r.tempo = d["tempo"].clone();
+                r.proj = d["proj"].as_object().cloned().unwrap_or_default();
                 r.comments = d["comments"].as_object().cloned().unwrap_or_default();
                 r.chat = d["chat"].as_array().cloned().unwrap_or_default();
             }
@@ -85,7 +88,7 @@ impl Room {
         self.dirty = false;
         let d = json!({
             "seq": self.seq, "tracks": self.tracks, "items": self.items, "order": self.order,
-            "tempo": self.tempo, "comments": self.comments, "chat": self.chat,
+            "tempo": self.tempo, "proj": self.proj, "comments": self.comments, "chat": self.chat,
         });
         let tmp = self.dir.join("state.json.tmp");
         if fs::write(&tmp, d.to_string()).is_ok() {
@@ -140,6 +143,11 @@ impl Room {
                 }
             }
             "tempo" => self.tempo = json!({"bpm": op["bpm"], "user": user, "ts": ts}),
+            "proj" => {
+                let Some(k) = op["key"].as_str().filter(|k| ["master", "markers", "tempomap"].contains(k)) else { return false };
+                let data: String = op["data"].as_str().unwrap_or("").chars().take(2_000_000).collect();
+                self.proj.insert(k.to_string(), json!({"data": data, "user": user, "ts": ts}));
+            }
             "comment" => {
                 let Some(id) = op["id"].as_str() else { return false };
                 self.comments.insert(
@@ -220,6 +228,65 @@ impl Room {
     fn file(&self, id: &str) -> PathBuf {
         self.dir.join("files").join(id)
     }
+}
+
+/// Duże pliki przychodzą w częściach po PART bajtów (?part=i&parts=N); po ostatniej
+/// części serwer skleja plik.
+const PART: u64 = 8 * 1024 * 1024;
+
+fn put_part(req: &mut Request, id: &str, dest: &Path, part: u64, parts: u64, expected: Option<usize>) -> Result<Map<String, Value>, &'static str> {
+    let size: u64 = id.split('~').nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let want = size.div_ceil(PART);
+    if size == 0 || parts != want || part >= parts {
+        return Err("Invalid part");
+    }
+    let len = if part == parts - 1 { size - part * PART } else { PART };
+    if expected.map(|e| e as u64) != Some(len) {
+        return Err("Invalid part length");
+    }
+    let mut m = Map::new();
+    m.insert("ok".into(), json!(true));
+    m.insert("id".into(), json!(id));
+    m.insert("part".into(), json!(part));
+    if dest.exists() {
+        m.insert("done".into(), json!(true));
+        return Ok(m);
+    }
+    let pfile = |i: u64| PathBuf::from(format!("{}.p{:05}", dest.display(), i));
+    let tmp = PathBuf::from(format!("{}.tmp", pfile(part).display()));
+    let n = (|| -> std::io::Result<u64> {
+        let mut f = fs::File::create(&tmp)?;
+        let n = std::io::copy(req.as_reader(), &mut f)?;
+        f.flush()?;
+        Ok(n)
+    })()
+    .map_err(|_| "Upload interrupted")?;
+    if n != len {
+        let _ = fs::remove_file(&tmp);
+        return Err("Upload interrupted");
+    }
+    fs::rename(&tmp, pfile(part)).map_err(|_| "Upload interrupted")?;
+    let have = (0..parts).filter(|i| pfile(*i).exists()).count() as u64;
+    if have < parts {
+        m.insert("done".into(), json!(false));
+        m.insert("have".into(), json!(have));
+        return Ok(m);
+    }
+    let joined = PathBuf::from(format!("{}.join", dest.display()));
+    (|| -> std::io::Result<()> {
+        let mut out = fs::File::create(&joined)?;
+        for i in 0..parts {
+            std::io::copy(&mut fs::File::open(pfile(i))?, &mut out)?;
+        }
+        out.flush()
+    })()
+    .map_err(|_| "Join failed")?;
+    fs::rename(&joined, dest).map_err(|_| "Join failed")?;
+    for i in 0..parts {
+        let _ = fs::remove_file(pfile(i));
+    }
+    m.insert("done".into(), json!(true));
+    Ok(m)
 }
 
 struct Shared {
@@ -380,6 +447,7 @@ fn handle(sh: &Shared, mut req: Request) {
             m.insert("items".into(), Value::Object(r.items.clone()));
             m.insert("order".into(), Value::Array(r.order.clone()));
             m.insert("tempo".into(), r.tempo.clone());
+            m.insert("proj".into(), Value::Object(r.proj.clone()));
             m.insert("comments".into(), Value::Array(r.comments.values().cloned().collect()));
             let from = r.chat.len().saturating_sub(200);
             m.insert("chat".into(), Value::Array(r.chat[from..].to_vec()));
@@ -418,6 +486,15 @@ fn handle(sh: &Shared, mut req: Request) {
             }
             let expected = req.body_length();
             let dest = sh.room(&name).lock().unwrap().file(&id);
+            if let Some(part) = q.get("part") {
+                let parts = q.get("parts").and_then(|p| p.parse::<u64>().ok()).unwrap_or(0);
+                let res = put_part(&mut req, &id, &dest, part.parse().unwrap_or(u64::MAX), parts, expected);
+                let _ = match res {
+                    Ok(m) => req.respond(json_response(200, m)),
+                    Err(msg) => req.respond(err(400, "bad_upload", msg)),
+                };
+                return;
+            }
             let tmp = dest.with_extension(format!("part{}", std::process::id() as u64 + now() as u64));
             let res = (|| -> std::io::Result<u64> {
                 let mut f = fs::File::create(&tmp)?;
@@ -471,6 +548,7 @@ fn handle(sh: &Shared, mut req: Request) {
             m.insert("seq".into(), json!(r.seq));
             m.insert("users".into(), Value::Array(r.online()));
             m.insert("color".into(), json!(user_color(&user)));
+            m.insert("parts".into(), json!(PART));
             match r.ops_since(since) {
                 None => {
                     m.insert("resync".into(), json!(true));

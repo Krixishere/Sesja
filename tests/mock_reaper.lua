@@ -19,7 +19,7 @@ local function clock() return uptime() - T0 end
 local function log(...) io.stderr:write("[" .. ROLE .. string.format(" %5.1f] ", clock()), table.concat({ ... }, " "), "\n") end
 
 -------------------------------------------------------------------------------
-local P = { tracks = {}, cc = 0, markers = {}, ext = {}, projext = {}, bpm = 120, cursor = 0, undo = {} }
+local P = { tracks = {}, cc = 0, markers = {}, tempos = {}, ext = {}, projext = {}, bpm = 120, cursor = 0, undo = {} }
 local function bump() P.cc = P.cc + 1 end
 
 local function split_track(chunk)
@@ -261,7 +261,16 @@ function r.ReorderSelectedTracks(before)
   bump()
   return true
 end
-function r.CountTempoTimeSigMarkers() return 0 end
+function r.CountTempoTimeSigMarkers() return #P.tempos end
+function r.GetTempoTimeSigMarker(_, i)
+  local t = P.tempos[i + 1]
+  return true, t.pos, 0, 0, t.bpm, t.num, t.den, t.lin
+end
+function r.SetTempoTimeSigMarker(_, _, pos, _, _, bpm, num, den, lin)
+  P.tempos[#P.tempos + 1] = { pos = pos, bpm = bpm, num = num, den = den, lin = lin } bump() return true
+end
+function r.DeleteTempoTimeSigMarker(_, i) table.remove(P.tempos, i + 1) bump() return true end
+function r.GetMasterTrack() return P.master end
 function r.SetCurrentBPM(_, bpm) P.bpm = bpm bump() end
 function r.GetProjectTimeSignature2() return P.bpm, 4 end
 function r.PreventUIRefresh() end
@@ -274,10 +283,20 @@ function r.CountProjectMarkers() return #P.markers, #P.markers, 0 end
 function r.EnumProjectMarkers(i)
   local m = P.markers[i + 1]
   if not m then return 0 end
-  return i + 1, false, m.pos, 0, m.name, i + 1
+  return i + 1, m.rgn, m.pos, m.rend, m.name, m.idx
 end
-function r.DeleteProjectMarkerByIndex(_, i) table.remove(P.markers, i + 1) return true end
-function r.AddProjectMarker2(_, _, pos, _, name) P.markers[#P.markers + 1] = { pos = pos, name = name } return #P.markers end
+function r.EnumProjectMarkers3(_, i)
+  local m = P.markers[i + 1]
+  if not m then return 0 end
+  return i + 1, m.rgn, m.pos, m.rend, m.name, m.idx, m.color
+end
+function r.DeleteProjectMarkerByIndex(_, i) table.remove(P.markers, i + 1) bump() return true end
+function r.AddProjectMarker2(_, rgn, pos, rend, name, idx, color)
+  if not idx or idx < 0 then idx = #P.markers + 1 end
+  P.markers[#P.markers + 1] = { rgn = rgn or false, pos = pos, rend = rend or 0, name = name, idx = idx, color = color or 0 }
+  bump()
+  return idx
+end
 function r.SetProjExtState(_, s, k, v) P.projext[s .. k] = v end
 function r.GetProjExtState(_, s, k) return 1, P.projext[s .. k] or "" end
 function r.ColorToNative(rr, gg, bb) return rr + gg * 256 + bb * 65536 end
@@ -350,6 +369,8 @@ P.ext[S .. "interval"] = "0.3"
 -- RMP_ASK=1: mod pyta o nowe ścieżki (bez odpowiedzi nowe ścieżki zostają lokalne)
 P.ext[S .. "ask_tracks"] = os.getenv("RMP_ASK") or "0"
 P.ext[S .. "password"] = os.getenv("RMP_PASSWORD") or ""
+-- RMP_ADMIN: klucz gospodarza – dostaje go tylko Ania (A); Bartek jest edytorem
+if ROLE == "A" then P.ext[S .. "admin_key"] = os.getenv("RMP_ADMIN") or "" end
 P.ext[S .. "lang"] = ROLE == "A" and "pl" or "en" -- Ania po polsku, Bartek po angielsku
 os.execute('mkdir -p "' .. DIR .. '/project"')
 
@@ -379,7 +400,21 @@ local function find_track(name)
   end
 end
 
+P.master = make_track("MASTER")
+
 if ROLE == "A" then
+  at(5, function()
+    -- Ania: region refrenu, marker, mapa tempa i limiter na masterze
+    r.AddProjectMarker2(0, true, 10, 20, "Refren", 1, 0)
+    r.AddProjectMarker2(0, false, 30, 0, "Drop", 2, 0)
+    r.SetTempoTimeSigMarker(0, -1, 0, -1, -1, 140, 4, 4, false)
+    local h = P.master.header
+    table.insert(h, #h, "<FXCHAIN")
+    table.insert(h, #h, "<JS limiter \"\"")
+    table.insert(h, #h, ">")
+    table.insert(h, #h, ">")
+    bump()
+  end)
   -- Ania ma już projekt: ścieżka "Wokal" z nagraniem
   local wav = DIR .. "/project/vocal take.wav"
   write_wav(wav, 300000)
@@ -401,7 +436,7 @@ else
   at(3.5, function()
     -- Bartek nagrał gitarę na nowej ścieżce
     local wav = DIR .. "/project/gitara.wav"
-    write_wav(wav, 200000)
+    write_wav(wav, tonumber(os.getenv("RMP_BIG") or "") or 200000)
     local tr = make_track("Gitara")
     P.tracks[#P.tracks + 1] = tr
     tr.items[1] = new_item(audio_item_chunk(wav, 0, 8), tr)
@@ -419,6 +454,15 @@ else
     -- Bartek zmienia nazwę swojej ścieżki
     r.GetSetMediaTrackInfo_String(find_track("Gitara"), "P_NAME", "Gitara akustyczna", true)
   end)
+  at(9, function()
+    -- Bartek: szyna z pogłosem i wysyłka z gitary
+    local bus = make_track("Pogłos")
+    P.tracks[#P.tracks + 1] = bus
+    local src = 0
+    for i, tr in ipairs(P.tracks) do if tr == find_track("Gitara akustyczna") then src = i - 1 end end
+    table.insert(bus.header, #bus.header, "AUXRECV " .. src .. " 0 0.5 0 0 0 0 0 0 -1:U 0 -1 ''")
+    bump()
+  end)
 end
 
 -------------------------------------------------------------------------------
@@ -431,7 +475,7 @@ local src = io.open("reaper/ReaperMultiplayer.lua"):read("a")
 local chunkfn = assert(load(src, "@ReaperMultiplayer.lua"))
 chunkfn()
 
-local END = 14
+local END = tonumber(os.getenv("RMP_END") or "") or 14
 while clock() < END do
   for i = #steps, 1, -1 do
     if clock() >= steps[i].t then
@@ -449,12 +493,13 @@ if deferred then deferred() end
 if atexitfn then atexitfn() end
 
 -- zrzut stanu projektu
-local out = { tracks = {}, markers = P.markers, bpm = P.bpm, undo = P.undo }
+local out = { tracks = {}, markers = P.markers, tempos = P.tempos, bpm = P.bpm, undo = P.undo,
+  master = table.concat(P.master.header, "\n") }
 for _, tr in ipairs(P.tracks) do
   local h = table.concat(tr.header, "\n")
   local t = {
     guid = tr.guid, name = M.unquote(get_line(h, "NAME") or ""), volpan = get_line(h, "VOLPAN"),
-    rec = get_line(h, "REC"), items = {},
+    rec = get_line(h, "REC"), items = {}, auxrecv = get_line(h, "AUXRECV"),
   }
   for _, it in ipairs(tr.items) do
     local file = it.chunk:match('FILE "([^"]+)"')

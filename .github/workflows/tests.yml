@@ -38,9 +38,15 @@ jobs:
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:8797/api/ping && break; sleep 1; done
           cd ../..
           test "$(curl -s 'http://127.0.0.1:8797/api/state?room=nieistnieje' | python3 -c 'import sys,json;print(json.load(sys.stdin)["code"])')" = no_room
-          ROOM=$(curl -s -X POST http://127.0.0.1:8797/api/rooms -d '{"name":"CI","password":"haslo1"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["room"])')
+          RESP=$(curl -s -X POST http://127.0.0.1:8797/api/rooms -d '{"name":"CI","password":"haslo1"}')
+          ROOM=$(echo "$RESP" | python3 -c 'import sys,json;print(json.load(sys.stdin)["room"])')
+          ADMIN=$(echo "$RESP" | python3 -c 'import sys,json;print(json.load(sys.stdin)["admin_key"])')
           test "$(curl -s "http://127.0.0.1:8797/api/state?room=$ROOM" | python3 -c 'import sys,json;print(json.load(sys.stdin)["code"])')" = bad_password
-          RMP_SERVER_URL=http://127.0.0.1:8797 RMP_ROOM=$ROOM RMP_PASSWORD=haslo1 python3 tests/run_e2e.py
+          RMP_SERVER_URL=http://127.0.0.1:8797 RMP_ROOM=$ROOM RMP_PASSWORD=haslo1 RMP_ADMIN=$ADMIN python3 tests/run_e2e.py
+          # duży plik (20 MB) – przesyłanie w częściach
+          RESP=$(curl -s -X POST http://127.0.0.1:8797/api/rooms -d '{"name":"CI big","password":"haslo1"}')
+          ROOM=$(echo "$RESP" | python3 -c 'import sys,json;print(json.load(sys.stdin)["room"])')
+          RMP_BIG=20000000 RMP_END=60 RMP_SERVER_URL=http://127.0.0.1:8797 RMP_ROOM=$ROOM RMP_PASSWORD=haslo1 python3 tests/run_e2e.py
       - name: E2E z serwerem wbudowanym w aplikację
         run: |
           cargo build --manifest-path app/src-tauri/Cargo.toml

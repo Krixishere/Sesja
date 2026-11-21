@@ -17,6 +17,8 @@ pub struct Conn {
     pub room: String,
     pub user: String,
     pub password: String,
+    /// Klucz gospodarza (tylko u twórcy sesji) – daje prawa administratora.
+    pub admin: String,
 }
 
 #[derive(Serialize, Clone, Default)]
@@ -85,6 +87,12 @@ pub struct Summary {
     pub seq: u64,
     /// Kolor każdej osoby, która coś dodała (ten sam co w REAPERze).
     pub colors: HashMap<String, String>,
+    /// admin | editor (sesja z linkiem); starsze serwery: admin, roles = false
+    pub role: String,
+    pub roles: bool,
+    /// prośby edytorów o usunięcie i szkice czekające na gospodarza
+    pub requests: Vec<Value>,
+    pub drafts: Vec<Value>,
 }
 
 struct Model {
@@ -104,6 +112,10 @@ struct Model {
     users: Vec<Value>,
     my_color: String,
     outbox: Vec<Value>,
+    role: String,
+    roles: bool,
+    requests: Vec<Value>,
+    drafts: Vec<Value>,
 }
 
 fn now() -> f64 {
@@ -211,7 +223,15 @@ impl Model {
         }
     }
 
+    fn read_review(&mut self, v: &Value) {
+        self.roles = v["roles"].as_bool().unwrap_or(false);
+        self.role = v["role"].as_str().unwrap_or("admin").to_string();
+        self.requests = v["requests"].as_array().cloned().unwrap_or_default();
+        self.drafts = v["drafts"].as_array().cloned().unwrap_or_default();
+    }
+
     fn load_state(&mut self, st: &Value) {
+        self.read_review(st);
         self.tracks.clear();
         self.items.clear();
         self.comments.clear();
@@ -388,6 +408,10 @@ impl Model {
             feed: self.feed.iter().cloned().collect(),
             comments,
             seq: self.last_seq,
+            role: self.role.clone(),
+            roles: self.roles,
+            requests: self.requests.clone(),
+            drafts: self.drafts.clone(),
         }
     }
 }
@@ -452,6 +476,7 @@ type CallErr = (String, &'static str);
 
 fn call(req: ureq::Request, body: Option<&Value>, conn: &Conn) -> Result<Value, CallErr> {
     let req = if conn.password.is_empty() { req } else { req.set("X-RMP-Key", &conn.password) };
+    let req = if conn.admin.is_empty() { req } else { req.set("X-Sesja-Admin", &conn.admin) };
     let res = match body {
         Some(b) => req.send_json(b.clone()),
         None => req.call(),
@@ -506,7 +531,7 @@ pub fn create_room(server: &str, name: &str, password: &str) -> Result<Value, St
 
 /// Informacje o sesji z linku: {exists, name, has_password}. Starsze serwery -> exists: null.
 pub fn room_info(server: &str, room: &str) -> Result<Value, String> {
-    let conn = Conn { server: server.trim_end_matches('/').to_string(), room: room.to_string(), user: String::new(), password: String::new() };
+    let conn = Conn { server: server.trim_end_matches('/').to_string(), room: room.to_string(), user: String::new(), password: String::new(), admin: String::new() };
     let req = agent().get(&url(&conn, &format!("/api/room?room={room}")));
     match call(req, None, &conn) {
         Ok(v) => Ok(v),
@@ -535,6 +560,10 @@ impl Session {
             users: Vec::new(),
             my_color: crate::server::user_color(&conn.user).into(),
             outbox: Vec::new(),
+            role: "admin".into(),
+            roles: false,
+            requests: Vec::new(),
+            drafts: Vec::new(),
         }));
         let stop = Arc::new(AtomicBool::new(false));
         {
@@ -626,6 +655,7 @@ fn run(app: AppHandle, model: Arc<Mutex<Model>>, stop: Arc<AtomicBool>, conn: Co
                     m.error = None;
                     m.error_kind = None;
                     m.users = r["users"].as_array().cloned().unwrap_or_default();
+                    m.read_review(&r);
                     if let Some(c) = r["color"].as_str() {
                         m.my_color = c.into();
                     }
@@ -694,6 +724,7 @@ pub fn fetch_file(conn: &Conn, id: &str, cache: PathBuf) -> Result<PathBuf, Stri
     }
     let req = agent().get(&url(conn, &format!("/api/file?room={}&id={}", conn.room, id)));
     let req = if conn.password.is_empty() { req } else { req.set("X-RMP-Key", &conn.password) };
+    let req = if conn.admin.is_empty() { req } else { req.set("X-Sesja-Admin", &conn.admin) };
     let resp = req.call().map_err(|e| match e {
         ureq::Error::Status(404, _) => t("file_pending"),
         e => short_err(&e.to_string()).0,

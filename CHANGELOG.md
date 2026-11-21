@@ -3,6 +3,44 @@
 Nagłówki wersji aplikacji mają postać `## Sesja X.Y.Z` – sekcja trafia automatycznie
 do opisu wydania na GitHubie.
 
+## Sesja 1.7.0
+
+- **Gospodarz i edytorzy.** Kto zakłada sesję („Utwórz sesję”), jest gospodarzem, a reszta to
+  edytorzy:
+  - nowe ścieżki i klipy edytorów trafiają do pokoju jako **szkice**: wszyscy je słyszą, a gospodarz je
+    akceptuje albo odrzuca;
+  - **usuwanie przez edytora wymaga zgody gospodarza**; po odmowie klip albo ścieżka wraca;
+  - w aplikacji jest panel „Do akceptacji” (z „Akceptuj wszystkie”), a w modzie karty z decyzją.
+    Plakietki „Gospodarz” i „Edytor” są w Studiu i w modzie.
+- **Duże pliki (np. bit w WAV) wysyłają się w częściach po 8 MB**, z postępem w procentach, bez limitu
+  rozmiaru i z ponawianiem pojedynczych części.
+  - Wcześniej plik ponad ~95 MB był odrzucany, a mod czekał na odpowiedź nawet godzinę („oczekuje: 1”).
+  - Teraz mod od razu wie, że wysyłka się skończyła, i ponawia ją, zamiast się poddawać.
+- **Przez serwer idzie więcej rzeczy z REAPERa:**
+  - efekty i ustawienia mastera;
+  - markery i regiony;
+  - mapa tempa i metrum;
+  - wysyłki (sendy) między ścieżkami: wskazują właściwą ścieżkę u każdego, nawet przy innej numeracji.
+- **Brakujące wtyczki.** Gdy ktoś nie ma wtyczki z Twojej ścieżki (np. płatnego Auto-Tune), mod mu to
+  pokazuje i pozwala poprosić o wersję audio. Ty dostajesz kartę „Wyrenderuj dla innych”: ścieżka
+  zamraża się do audio z efektem i wszyscy ją słyszą. Wtyczka i jej licencja nigdy nie opuszczają Twojego
+  komputera. „Odmroź” w menu moda przywraca edycję.
+- **Mod działa w tle.** „Ukryj” albo zamknięcie okna nie przerywa sesji. Ponowne uruchomienie akcji
+  „Sesja” pokazuje okno i wraca do sesji bez pytań (REAPER 7). Małe okno przechodzi w tryb mini.
+- **Ochrona przed spamem na serwerze:**
+  - do 10 wiadomości na 20 sekund na osobę, maksymalnie 2000 znaków;
+  - limit żądań na połączenie;
+  - do 20 osób w sesji;
+  - do 20 nowych sesji na godzinę z jednego adresu.
+
+## Mod 1.7.0
+
+- Role (gospodarz / edytor), szkice i prośby o usunięcie z kartami decyzji.
+- Wysyłanie dużych plików w częściach, szybkie wykrywanie błędów wysyłki, ponawianie bez poddawania się.
+- Synchronizacja mastera, markerów i regionów, mapy tempa oraz wysyłek (po GUID ścieżki).
+- Wykrywanie brakujących wtyczek, prośba o wersję audio, „Wyrenderuj dla innych” (zamrożenie).
+- Praca w tle, tryb mini, przycisk „Ukryj”, powrót do sesji po ponownym uruchomieniu.
+
 ## Sesja 1.6.1
 
 - Naprawione „Session not found” u osób dołączających przez link. Mod w REAPERze zostawał przy starym

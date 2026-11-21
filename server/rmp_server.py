@@ -33,6 +33,7 @@ MAX_LOG = 20000          # ile operacji trzymamy w pamięci, zanim przytniemy lo
 MAX_CHAT = 500
 ONLINE_TIMEOUT = 15.0    # po ilu sekundach bez sync-a użytkownik znika z listy
 MAX_UPLOAD = 4 * 1024 * 1024 * 1024  # 4 GB
+PART = 8 * 1024 * 1024  # duże pliki przychodzą w częściach (?part=i&parts=N)
 
 PALETTE = [
     "#e6194b", "#3cb44b", "#ffe119", "#4363d8", "#f58231", "#911eb4",
@@ -64,6 +65,7 @@ class Room:
         self.items = {}        # guid -> {chunk, track, author, editor, ts}
         self.order = []
         self.tempo = None
+        self.proj = {}
         self.comments = {}     # id -> {id, pos, text, user, ts}
         self.chat = []
         self.users = {}        # cid -> {name, color, pos, play, rec, last}
@@ -87,6 +89,7 @@ class Room:
             self.items = d.get("items", {})
             self.order = d.get("order", [])
             self.tempo = d.get("tempo")
+            self.proj = d.get("proj", {})
             self.comments = d.get("comments", {})
             self.chat = d.get("chat", [])
         except Exception as e:  # pragma: no cover
@@ -98,7 +101,7 @@ class Room:
                 return
             d = {
                 "seq": self.seq, "tracks": self.tracks, "items": self.items,
-                "order": self.order, "tempo": self.tempo,
+                "order": self.order, "tempo": self.tempo, "proj": self.proj,
                 "comments": self.comments, "chat": self.chat,
             }
             self.dirty = False
@@ -148,6 +151,11 @@ class Room:
                 self.order = [g for g in lst if isinstance(g, str)]
         elif t == "tempo":
             self.tempo = {"bpm": op.get("bpm"), "user": user, "ts": ts}
+        elif t == "proj":
+            # master z efektami, markery/regiony, mapa tempa – ostatni zapis wygrywa
+            if op.get("key") not in ("master", "markers", "tempomap"):
+                return False
+            self.proj[op["key"]] = {"data": str(op.get("data", ""))[:2000000], "user": user, "ts": ts}
         elif t == "comment":
             cid = op.get("id")
             if cid:
@@ -235,7 +243,7 @@ class Room:
         with self.lock:
             return {
                 "seq": self.seq, "tracks": self.tracks, "items": self.items,
-                "order": self.order, "tempo": self.tempo,
+                "order": self.order, "tempo": self.tempo, "proj": self.proj,
                 "comments": list(self.comments.values()), "chat": self.chat[-200:],
             }
 
@@ -398,7 +406,7 @@ def make_handler(srv):
                 room.add_ops(ops, user, cid)
             out, more = room.ops_since(since)
             resp = {"ok": True, "seq": room.seq, "users": room.online_users(),
-                    "color": user_color(user)}
+                    "color": user_color(user), "parts": PART}
             if out is None:
                 resp["resync"] = True
                 resp["ops"] = []
@@ -433,6 +441,8 @@ def make_handler(srv):
             if n < 0 or n > MAX_UPLOAD:
                 return self._err(400, "bad_upload", "Missing or invalid Content-Length")
             dest = room.file_path(fid)
+            if "part" in q:
+                return self._put_part(fid, dest, q, n)
             tmp = dest + ".part%d" % threading.get_ident()
             left = n
             with open(tmp, "wb") as f:
@@ -447,6 +457,54 @@ def make_handler(srv):
                 return self._err(400, "bad_upload", "Upload interrupted")
             os.replace(tmp, dest)
             self._json(200, {"ok": True, "id": fid, "size": n})
+
+        def _put_part(self, fid, dest, q, n):
+            m = re.search(r"~(\d+)~[0-9a-f]+", fid)
+            size = int(m.group(1)) if m else 0
+            try:
+                part, parts = int(q.get("part", "")), int(q.get("parts", ""))
+            except ValueError:
+                return self._err(400, "bad_upload", "Invalid part")
+            want = (size + PART - 1) // PART
+            if size <= 0 or parts != want or not 0 <= part < parts:
+                return self._err(400, "bad_upload", "Invalid part")
+            if n != (size - part * PART if part == parts - 1 else PART):
+                return self._err(400, "bad_upload", "Invalid part length")
+            if os.path.exists(dest):
+                return self._json(200, {"ok": True, "id": fid, "part": part, "done": True})
+            pfile = "%s.p%05d" % (dest, part)
+            left = n
+            with open(pfile + ".tmp", "wb") as f:
+                while left > 0:
+                    b = self.rfile.read(min(left, 1024 * 256))
+                    if not b:
+                        break
+                    f.write(b)
+                    left -= len(b)
+            if left != 0:
+                os.remove(pfile + ".tmp")
+                return self._err(400, "bad_upload", "Upload interrupted")
+            os.replace(pfile + ".tmp", pfile)
+            have = [i for i in range(parts) if os.path.exists("%s.p%05d" % (dest, i))]
+            if len(have) < parts:
+                return self._json(200, {"ok": True, "id": fid, "part": part, "done": False,
+                                        "have": len(have), "parts": parts})
+            tmp = dest + ".join%d" % threading.get_ident()
+            with open(tmp, "wb") as out:
+                for i in range(parts):
+                    with open("%s.p%05d" % (dest, i), "rb") as f:
+                        while True:
+                            b = f.read(1024 * 1024)
+                            if not b:
+                                break
+                            out.write(b)
+            os.replace(tmp, dest)
+            for i in range(parts):
+                try:
+                    os.remove("%s.p%05d" % (dest, i))
+                except OSError:
+                    pass
+            self._json(200, {"ok": True, "id": fid, "part": part, "done": True, "size": size})
 
         # -------------------------------------------------- mini panel WWW
         def _index(self):

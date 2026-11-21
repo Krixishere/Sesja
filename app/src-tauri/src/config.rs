@@ -29,6 +29,8 @@ pub struct Config {
     pub room_name: String,
     /// Mod pyta, zanim nowa ścieżka trafi do pokoju.
     pub ask_tracks: bool,
+    /// Klucze gospodarza do sesji, które założyłeś: kod sesji -> klucz.
+    pub admin_keys: std::collections::HashMap<String, String>,
 }
 
 /// Domyślny, wspólny serwer Sesji – wszyscy zakładają i dołączają do sesji tutaj.
@@ -53,6 +55,7 @@ impl Default for Config {
             cloud_url: String::new(),
             room_name: String::new(),
             ask_tracks: true,
+            admin_keys: Default::default(),
         }
     }
 }

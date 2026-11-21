@@ -10,7 +10,7 @@
 --
 --   Wymagania: REAPER 6.0+, program curl (wbudowany w Windows 10/11 i macOS).
 
-local VERSION = "1.6.1"
+local VERSION = "1.7.0"
 local M = {}
 
 -------------------------------------------------------------------------------
@@ -435,6 +435,9 @@ if not reaper then return M end
 local r = reaper
 local SEC = "ReaperMultiplayer"
 local MARK = "\u{1F4AC} " -- 💬 prefiks markerów-komentarzy
+-- akcje REAPERa: Track: Freeze to stereo (render pre-fader, save/remove items and online FX)
+-- i Track: Unfreeze tracks (restore previously saved items and FX)
+local FREEZE, UNFREEZE = 41223, 41644
 local IS_WIN = r.GetOS():match("Win") ~= nil
 local SEP = IS_WIN and "\\" or "/"
 
@@ -458,7 +461,8 @@ local CFG = {
   lang = get_ext("lang", "pl"), -- ustawia aplikacja Sesja; pl albo en (inne -> en)
   hidden = get_ext("hidden", "1") == "1", -- Windows: curl bez migającego okna konsoli
   ask = get_ext("ask_tracks", "1") == "1", -- pytaj, zanim nowa ścieżka trafi do pokoju
-  room_name = get_ext("room_name", ""), -- nazwa sesji z aplikacji (pokój to wtedy kod z linku)
+  room_name = get_ext("room_name", ""),
+  admin = get_ext("admin_key", ""), -- klucz gospodarza (tylko twórca sesji) -- nazwa sesji z aplikacji (pokój to wtedy kod z linku)
 }
 
 -------------------------------------------------------------------------------
@@ -470,7 +474,8 @@ local L = {
     item_add = "dodaje klip „%s” na ścieżce „%s” @ %s", item_edit = "edytuje klip „%s” (%s)", item_del = "usuwa klip „%s”",
     order = "zmienia kolejność ścieżek", tempo = "ustawia tempo na %.2f BPM", comment_del = "usuwa komentarz",
     no_name = "bez nazwy", clip = "klip",
-    upload_failed = "Nie udało się wysłać pliku %s", conn_error = "Błąd połączenia", server_error = "Błąd serwera",
+    upload_failed = "Nie udało się wysłać pliku %s", rejected = "serwer odrzucił żądanie", server_said = "serwer: %s",
+    conn_error = "Błąd połączenia", server_error = "Błąd serwera",
     no_curl = "Nie można uruchomić curl (%s)", no_answer = "Brak odpowiedzi serwera (%s)",
     state_error = "Błąd pobierania stanu", cant_connect = "Nie można połączyć",
     srv_bad_password = "Złe hasło", srv_bad_room = "Niepoprawna nazwa pokoju",
@@ -493,6 +498,24 @@ local L = {
     menu_settings = "Ustawienia połączenia…", menu_colorize = "Koloruj moje nowe klipy moim kolorem",
     menu_resync = "Wymuś pełną synchronizację", menu_clear = "Wyczyść czat lokalnie",
     ask_track = "Nowa ścieżka „%s” – dodać do pokoju?", ask_more = "i jeszcze %d",
+    role_admin = "Gospodarz", role_editor = "Edytor", host_badge = "GOSPODARZ",
+    proj_master = "zmienia efekty i ustawienia mastera", proj_markers = "zmienia markery i regiony",
+    proj_tempomap = "zmienia mapę tempa i metrum",
+    fx_missing = "Nie masz wtyczki „%s” (ścieżka „%s”) – nie usłyszysz jej efektu.", fx_ask = "Poproś o wersję audio",
+    fx_hide = "Ukryj", fx_ask_chat = "Proszę o wersję audio ścieżki „%s” – nie mam wtyczki %s",
+    fx_req = "%s nie ma wtyczki „%s” – wyrenderuj „%s” do audio dla innych?", fx_render = "Wyrenderuj dla innych",
+    fx_later = "Nie teraz", menu_freeze = "Wyrenderuj zaznaczone ścieżki do audio dla innych (zamroź)",
+    menu_unfreeze = "Przywróć zaznaczone ścieżki do edycji (odmroź)",
+    req_q = "%s chce usunąć %s „%s”", req_yes = "Usuń", req_no = "Zostaw",
+    draft_q = "Szkic: %s „%s” · dodał(a) %s", draft_ok = "Akceptuj", draft_no = "Odrzuć", draft_all = "Akceptuj wszystkie (%d)",
+    k_track = "ścieżkę", k_item = "klip", k_track1 = "ścieżka", k_item1 = "klip",
+    editor_wait = "Czeka na gospodarza: szkice %d · usunięcia %d",
+    draft_label = "SZKIC – czeka na akceptację gospodarza · ",
+    a_req_ok = "zgadza się na usunięcie „%s” (%s)", a_req_no = "zostawia „%s” – nie usunięto (%s)",
+    a_draft_ok = "akceptuje szkic „%s” (%s)", a_draft_no = "odrzuca szkic „%s” (%s)",
+    hide = "Ukryj", mini_open = "Rozwiń", menu_hide = "Ukryj okno – Sesja działa dalej w tle",
+    menu_quit = "Rozłącz i zamknij", bg_hint = "Sesja działa w tle. Uruchom akcję „Sesja” ponownie, żeby pokazać okno.",
+    online_n = "%d online",
     ask_add = "Dodaj do pokoju", ask_private = "Tylko u mnie", ask_always = "Zawsze dodawaj",
     ask_hint = "Dopóki nie zdecydujesz, inni jej nie widzą.",
     menu_ask = "Pytaj przed dodaniem nowej ścieżki do pokoju", menu_share_private = "Dodaj do pokoju ścieżki „tylko u mnie” (%d)",
@@ -510,7 +533,8 @@ local L = {
     item_add = "added clip “%s” on track “%s” @ %s", item_edit = "edited clip “%s” (%s)", item_del = "deleted clip “%s”",
     order = "reordered the tracks", tempo = "set the tempo to %.2f BPM", comment_del = "deleted a comment",
     no_name = "unnamed", clip = "clip",
-    upload_failed = "Could not upload file %s", conn_error = "Connection error", server_error = "Server error",
+    upload_failed = "Could not upload file %s", rejected = "the server rejected the request", server_said = "server: %s",
+    conn_error = "Connection error", server_error = "Server error",
     no_curl = "Cannot start curl (%s)", no_answer = "No answer from the server (%s)",
     state_error = "Could not load the project state", cant_connect = "Cannot connect",
     srv_bad_password = "Wrong password", srv_bad_room = "Invalid room name",
@@ -533,6 +557,24 @@ local L = {
     menu_settings = "Connection settings…", menu_colorize = "Colour my new clips with my colour",
     menu_resync = "Force full sync", menu_clear = "Clear chat locally",
     ask_track = "New track “%s” – add it to the room?", ask_more = "and %d more",
+    role_admin = "Host", role_editor = "Editor", host_badge = "HOST",
+    proj_master = "changed the master FX and settings", proj_markers = "changed markers and regions",
+    proj_tempomap = "changed the tempo map and time signature",
+    fx_missing = "You don’t have the plugin “%s” (track “%s”) – you won’t hear its effect.", fx_ask = "Ask for an audio version",
+    fx_hide = "Hide", fx_ask_chat = "Please share an audio version of track “%s” – I don’t have the plugin %s",
+    fx_req = "%s doesn’t have the plugin “%s” – render “%s” to audio for others?", fx_render = "Render for others",
+    fx_later = "Not now", menu_freeze = "Render selected tracks to audio for others (freeze)",
+    menu_unfreeze = "Restore selected tracks for editing (unfreeze)",
+    req_q = "%s wants to delete %s “%s”", req_yes = "Delete", req_no = "Keep",
+    draft_q = "Draft: %s “%s” · by %s", draft_ok = "Accept", draft_no = "Reject", draft_all = "Accept all (%d)",
+    k_track = "track", k_item = "clip", k_track1 = "track", k_item1 = "clip",
+    editor_wait = "Waiting for the host: drafts %d · deletions %d",
+    draft_label = "DRAFT – waiting for the host · ",
+    a_req_ok = "approved deleting “%s” (%s)", a_req_no = "kept “%s” – not deleted (%s)",
+    a_draft_ok = "accepted the draft “%s” (%s)", a_draft_no = "rejected the draft “%s” (%s)",
+    hide = "Hide", mini_open = "Expand", menu_hide = "Hide window – Sesja keeps running in the background",
+    menu_quit = "Disconnect and close", bg_hint = "Sesja runs in the background. Run the “Sesja” action again to show the window.",
+    online_n = "%d online",
     ask_add = "Add to room", ask_private = "Only for me", ask_always = "Always add",
     ask_hint = "Others won’t see it until you decide.",
     menu_ask = "Ask before adding a new track to the room", menu_share_private = "Add my “only for me” tracks to the room (%d)",
@@ -558,6 +600,7 @@ local function server_msg(resp)
 end
 
 local S -- stan sesji (reset przy każdym połączeniu)
+local RESUME = false -- po ponownym uruchomieniu: wróć do sesji bez pytania
 local function reset_state()
   S = {
     state = "off", -- off | connecting | on | error
@@ -572,9 +615,13 @@ local function reset_state()
     lastCC = -1,
     pending = {}, deferred = {},
     fileLocal = {}, fileConfirmed = {}, fileChecking = {},
-    uploads = {}, downloads = {}, want = {}, uploadFails = {},
+    uploads = {}, downloads = {}, want = {}, uploadFails = {}, uploadRetry = {}, uploadProg = {},
+    serverParts = nil, -- serwer przyjmuje pliki w częściach tej wielkości
+    baseProj = {}, -- ostatnio wysłany/otrzymany master, markery, mapa tempa
+    missingFx = {}, fxHidden = {}, fxRequests = {}, nextFxScan = 0,
     lastPending = 0, lastSyncedSave = 0, syncedDirty = false,
     serverInfo = "",
+    role = "admin", roles = false, requests = {}, drafts = {}, draftSet = {},
     known = {}, -- ścieżki, które już są w pokoju albo zostały zatwierdzone
     held = {}, heldOrder = {}, -- nowe ścieżki czekające na decyzję: guid -> nazwa
   }
@@ -705,6 +752,7 @@ local function safe_key(s) return (s or ""):gsub("[^%w%._%-]", "") end
 local function curl_base()
   local c = q(CFG.curl) .. " -s -S --connect-timeout 6"
   if CFG.password ~= "" then c = c .. " -H " .. q("X-RMP-Key: " .. safe_key(CFG.password)) end
+  if CFG.admin ~= "" then c = c .. " -H " .. q("X-Sesja-Admin: " .. safe_key(CFG.admin)) end
   return c
 end
 
@@ -724,26 +772,36 @@ local WSCRIPT = (os.getenv("WINDIR") or "C:\\Windows") .. "\\System32\\wscript.e
 
 local function hidden_runner()
   if HIDDEN_VBS and file_exists(HIDDEN_VBS) then return HIDDEN_VBS end
-  HIDDEN_VBS = TMP .. SEP .. "sesja_hidden.vbs"
+  HIDDEN_VBS = TMP .. SEP .. "sesja_hidden2.vbs"
   write_file(HIDDEN_VBS, table.concat({
-    "' Sesja: uruchamia polecenie z pliku bez okna konsoli",
-    "Dim fso, f, cmd",
+    "' Sesja: uruchamia polecenie z pliku bez okna konsoli i zapisuje kod wyjścia",
+    "Dim fso, f, cmd, rc",
     "Set fso = CreateObject(\"Scripting.FileSystemObject\")",
     "Set f = fso.OpenTextFile(WScript.Arguments(0), 1, False, -1)",
     "cmd = f.ReadAll",
     "f.Close",
     "fso.DeleteFile WScript.Arguments(0)",
-    "CreateObject(\"WScript.Shell\").Run cmd, 0, False",
+    "rc = CreateObject(\"WScript.Shell\").Run(cmd, 0, True)",
+    "If WScript.Arguments.Count > 1 Then",
+    "  Set f = fso.CreateTextFile(WScript.Arguments(1), True)",
+    "  f.Write CStr(rc)",
+    "  f.Close",
+    "End If",
   }, "\r\n") .. "\r\n")
   return HIDDEN_VBS
 end
 
-local function run(cmd)
-  -- nie czekamy na zakończenie; wynik odczytujemy z pliku, a błędy wykrywamy przez timeout
+-- Uruchamia curl w tle. done: plik, w który po zakończeniu trafia kod wyjścia – dzięki niemu
+-- wiemy od razu, że curl skończył (np. serwer odrzucił plik), zamiast czekać do limitu czasu.
+local function run(cmd, done)
   if IS_WIN and CFG.hidden and file_exists(WSCRIPT) then
     local cmdfile = new_tmp("cmd")
     write_file(cmdfile, M.utf16le(cmd))
-    r.ExecProcess(q(WSCRIPT) .. " //B //Nologo " .. q(hidden_runner()) .. " " .. q(cmdfile), -1)
+    r.ExecProcess(q(WSCRIPT) .. " //B //Nologo " .. q(hidden_runner()) .. " " .. q(cmdfile)
+      .. (done and (" " .. q(done)) or ""), -1)
+  elseif done and not IS_WIN then
+    local inner = cmd .. "; echo $? > " .. q(done)
+    r.ExecProcess("/bin/sh -c '" .. inner:gsub("'", "'\\''") .. "'", -1)
   else
     r.ExecProcess(cmd, -1)
   end
@@ -760,23 +818,26 @@ local function http_json(method, path, body, cb, timeout)
     write_file(inp, json.encode(body))
     cmd = cmd .. " -X " .. method .. " -H " .. q("Content-Type: application/json") ..
       " --data-binary " .. q("@" .. inp)
-    jobs[#jobs + 1] = { kind = "json", out = out, inp = inp, cb = cb, t0 = now(), timeout = timeout + 4 }
+    jobs[#jobs + 1] = { kind = "json", out = out, inp = inp, cb = cb, t0 = now(), timeout = timeout + 4, done = out .. ".rc" }
   else
-    jobs[#jobs + 1] = { kind = "json", out = out, cb = cb, t0 = now(), timeout = timeout + 4 }
+    jobs[#jobs + 1] = { kind = "json", out = out, cb = cb, t0 = now(), timeout = timeout + 4, done = out .. ".rc" }
   end
   cmd = cmd .. " " .. q(url(path))
-  if not run(cmd) then
+  if not run(cmd, out .. ".rc") then
     local j = table.remove(jobs)
     j.cb(nil, T("no_curl", CFG.curl))
   end
 end
 
-local function http_upload(id, localPath, cb)
+local function http_upload(id, localPath, cb, part, parts)
   local out = new_tmp("json")
-  local cmd = curl_base() .. " --max-time 3600 -H " .. q("Expect:") .. " -T " .. q(localPath) ..
-    " -o " .. q(out) .. " " .. q(url("/api/file?room=" .. CFG.room .. "&id=" .. id))
-  jobs[#jobs + 1] = { kind = "json", out = out, cb = cb, t0 = now(), timeout = 3610 }
-  if not run(cmd) then
+  local path = "/api/file?room=" .. CFG.room .. "&id=" .. id
+  if part then path = path .. "&part=" .. part .. "&parts=" .. parts end
+  -- --speed-limit: przerwij, gdy przez 60 s idzie mniej niż 1 KB/s (zerwane łącze)
+  local cmd = curl_base() .. " --max-time 1800 --speed-limit 1024 --speed-time 60 -H " .. q("Expect:") ..
+    " -T " .. q(localPath) .. " -o " .. q(out) .. " " .. q(url(path))
+  jobs[#jobs + 1] = { kind = "json", out = out, cb = cb, t0 = now(), timeout = 1810, done = out .. ".rc" }
+  if not run(cmd, out .. ".rc") then
     local j = table.remove(jobs)
     j.cb(nil, "curl")
   end
@@ -789,9 +850,9 @@ local function http_download(id, dest, size, cb)
     q(url("/api/file?room=" .. CFG.room .. "&id=" .. id))
   jobs[#jobs + 1] = {
     kind = "file", out = tmp, dest = dest, size = size, cb = cb,
-    t0 = now(), lastGrow = now(), lastSize = -1, timeout = 3610,
+    t0 = now(), lastGrow = now(), lastSize = -1, timeout = 3610, done = tmp .. ".rc",
   }
-  if not run(cmd) then
+  if not run(cmd, tmp .. ".rc") then
     local j = table.remove(jobs)
     j.cb(false)
   end
@@ -814,12 +875,18 @@ local function poll_jobs()
           j.cb(obj)
         end
       end
-      if not done and t - j.t0 > j.timeout then
+      -- curl skończył, a odpowiedzi JSON brak (np. serwer odrzucił plik stroną HTML)
+      local finished = not done and j.done and file_exists(j.done) and (j.doneSeen or 0) > 0 and t - j.doneSeen > 0.5
+      if not done and j.done and file_exists(j.done) and not j.doneSeen then j.doneSeen = t end
+      if finished or (not done and t - j.t0 > j.timeout) then
         done = true
+        local body = read_file(j.out) or ""
         os.remove(j.out)
         if j.inp then os.remove(j.inp) end
-        j.cb(nil, T("no_answer", CFG.server))
+        local code = body:match("<title>(.-)</title>") or (finished and T("rejected")) or nil
+        j.cb(nil, code and T("server_said", code) or T("no_answer", CFG.server))
       end
+      if done and j.done then os.remove(j.done) end
     else -- plik
       local sz = file_size(j.out)
       if sz and sz ~= j.lastSize then j.lastSize, j.lastGrow = sz, t end
@@ -828,11 +895,13 @@ local function poll_jobs()
         os.remove(j.dest)
         local ok = os.rename(j.out, j.dest)
         j.cb(ok and true or false)
-      elseif t - j.lastGrow > 45 or t - j.t0 > j.timeout then
+      elseif t - j.lastGrow > 45 or t - j.t0 > j.timeout
+        or (j.done and file_exists(j.done) and t - (j.lastGrow or 0) > 1) then
         done = true
         os.remove(j.out)
         j.cb(false)
       end
+      if done and j.done then os.remove(j.done) end
     end
     if done then table.remove(jobs, i) else i = i + 1 end
   end
@@ -883,6 +952,27 @@ local function needs_ask(g)
   return CFG.ask and S.state == "on" and not S.known[g] and not S.meta[g] and not S.baseTracks[g]
 end
 
+-- Wysyłki (sendy) w REAPERze wskazują ścieżkę źródłową numerem – u każdego może być inny.
+-- Na serwer idą z GUID ścieżki, a u odbiorcy zamieniamy je z powrotem na jego numer.
+local function sends_to_guid(header)
+  return (header:gsub("\nAUXRECV (%d+)([^\n]*)", function(idx, rest)
+    local src = r.GetTrack(0, tonumber(idx))
+    if not src then return "\nAUXRECV " .. idx .. rest end
+    local g = r.GetTrackGUID(src)
+    if PRIVATE[g] or S.held[g] then return "" end -- źródło jest tylko u mnie
+    return "\nAUXRECV " .. g .. rest
+  end))
+end
+local function sends_to_index(header, tmap)
+  local unresolved = false
+  local out = header:gsub("\nAUXRECV ({[%x%-]+})([^\n]*)", function(g, rest)
+    local tr = tmap[g]
+    if not tr then unresolved = true return "" end
+    return "\nAUXRECV " .. math.floor(r.GetMediaTrackInfo_Value(tr, "IP_TRACKNUMBER") - 1) .. rest
+  end)
+  return out, unresolved
+end
+
 local function snapshot()
   local snap = { tracks = {}, items = {}, order = {} }
   local held = {}
@@ -899,6 +989,7 @@ local function snapshot()
     do
     local _, chunk = r.GetTrackStateChunk(tr, "", false)
     local header, _, items = M.normalize_track(chunk)
+    header = sends_to_guid(header)
     snap.tracks[g] = { header = header, idx = i }
     snap.order[#snap.order + 1] = g
     for _, ic in ipairs(items) do
@@ -1075,11 +1166,81 @@ local function rebaseline(aff)
   S.syncedDirty = true
 end
 
+-------------------------------------------------------------------------------
+-- Projekt: master z efektami, markery i regiony, mapa tempa (ostatni zapis wygrywa)
+-------------------------------------------------------------------------------
+local PROJ_KEYS = { "master", "markers", "tempomap" }
+local function fnum(x) return string.format("%.10g", x or 0) end
+
+local function proj_read(key)
+  if key == "master" then
+    if not r.GetMasterTrack then return nil end
+    local _, chunk = r.GetTrackStateChunk(r.GetMasterTrack(0), "", false)
+    return (M.normalize_track(chunk or ""))
+  elseif key == "markers" then
+    if not r.EnumProjectMarkers3 then return nil end
+    local out, i = {}, 0
+    while true do
+      local ok, rgn, pos, rend, name, idx, color = r.EnumProjectMarkers3(0, i)
+      if ok == 0 then break end
+      if not (name or ""):find(MARK, 1, true) then -- markery-komentarze synchronizują się osobno
+        out[#out + 1] = table.concat({ rgn and "R" or "M", fnum(pos), fnum(rend), tostring(idx), tostring(color), name or "" }, "\t")
+      end
+      i = i + 1
+    end
+    return table.concat(out, "\n")
+  elseif key == "tempomap" then
+    if not r.GetTempoTimeSigMarker then return nil end
+    local out = {}
+    for i = 0, r.CountTempoTimeSigMarkers(0) - 1 do
+      local _, tpos, _, _, bpm, num, den, lin = r.GetTempoTimeSigMarker(0, i)
+      out[#out + 1] = table.concat({ fnum(tpos), fnum(bpm), tostring(num), tostring(den), lin and "1" or "0" }, "\t")
+    end
+    return table.concat(out, "\n")
+  end
+end
+
+local function proj_apply(key, data)
+  data = data or ""
+  if key == "master" and r.GetMasterTrack then
+    local m = r.GetMasterTrack(0)
+    local _, cur = r.GetTrackStateChunk(m, "", false)
+    local _, locals = M.normalize_track(cur or "")
+    if data ~= "" then r.SetTrackStateChunk(m, M.build_track_chunk(data, locals, {}), false) end
+  elseif key == "markers" and r.EnumProjectMarkers3 then
+    local i, del = 0, {}
+    while true do
+      local ok, _, _, _, name = r.EnumProjectMarkers3(0, i)
+      if ok == 0 then break end
+      if not (name or ""):find(MARK, 1, true) then del[#del + 1] = i end
+      i = i + 1
+    end
+    for k = #del, 1, -1 do r.DeleteProjectMarkerByIndex(0, del[k]) end
+    for line in (data .. "\n"):gmatch("(.-)\n") do
+      local k, pos, rend, idx, color, name = line:match("^([MR])\t([^\t]*)\t([^\t]*)\t([^\t]*)\t([^\t]*)\t(.*)$")
+      if k then
+        r.AddProjectMarker2(0, k == "R", tonumber(pos) or 0, tonumber(rend) or 0, name, tonumber(idx) or -1, tonumber(color) or 0)
+      end
+    end
+  elseif key == "tempomap" and r.SetTempoTimeSigMarker then
+    for i = r.CountTempoTimeSigMarkers(0) - 1, 0, -1 do r.DeleteTempoTimeSigMarker(0, i) end
+    for line in (data .. "\n"):gmatch("(.-)\n") do
+      local tpos, bpm, num, den, lin = line:match("^([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)\t([^\t]+)$")
+      if tpos then
+        r.SetTempoTimeSigMarker(0, -1, tonumber(tpos), -1, -1, tonumber(bpm), tonumber(num) or 0, tonumber(den) or 0, lin == "1")
+      end
+    end
+    r.UpdateTimeline()
+  end
+  S.baseProj[key] = proj_read(key)
+end
+
 local function apply_remote_ops(ops, undoName)
   if #ops == 0 then return end
   local tmap, imap = track_map(), item_map()
   local aff = { tracks = {}, items = {}, order = false, tempo = false }
   local who = {}
+  local later = {}
   r.PreventUIRefresh(1)
   r.Undo_BeginBlock2(0)
   for _, op in ipairs(ops) do
@@ -1088,19 +1249,21 @@ local function apply_remote_ops(ops, undoName)
     if t == "track" and op.guid and op.chunk then
       local g = op.guid
       local tr = tmap[g]
+      local hdr, unresolved = sends_to_index(op.chunk, tmap)
+      if unresolved then later[#later + 1] = op end -- źródło wysyłki przyjdzie w tej samej paczce
       if not tr then
         local n = r.CountTracks(0)
         r.InsertTrackAtIndex(n, false)
         tr = r.GetTrack(0, n)
-        r.SetTrackStateChunk(tr, M.build_track_chunk(op.chunk, {}, {}), false)
+        r.SetTrackStateChunk(tr, M.build_track_chunk(hdr, {}, {}), false)
         pcall(r.GetSetMediaTrackInfo_String, tr, "GUID", g, true)
         tmap[g] = tr
         aff.order = true
       else
         local _, cur = r.GetTrackStateChunk(tr, "", false)
         local h, locals, items = M.normalize_track(cur)
-        if h ~= op.chunk and not fast_track(tr, h, op.chunk) then
-          r.SetTrackStateChunk(tr, M.build_track_chunk(op.chunk, locals, items), false)
+        if sends_to_guid(h) ~= op.chunk and not fast_track(tr, h, hdr) then
+          r.SetTrackStateChunk(tr, M.build_track_chunk(hdr, locals, items), false)
         end
       end
       aff.tracks[g] = true
@@ -1154,9 +1317,21 @@ local function apply_remote_ops(ops, undoName)
     elseif t == "order" then
       apply_order(op.list, tmap)
       aff.order = true
+    elseif t == "proj" and op.key then
+      proj_apply(op.key, op.data)
     elseif t == "tempo" and tonumber(op.bpm) then
       if r.CountTempoTimeSigMarkers(0) == 0 then r.SetCurrentBPM(0, tonumber(op.bpm), true) end
       aff.tempo = true
+    end
+  end
+  -- druga runda: wysyłki, których ścieżka źródłowa doszła w tej samej paczce
+  for _, op in ipairs(later) do
+    local tr = tmap[op.guid]
+    if tr then
+      local hdr = sends_to_index(op.chunk, tmap)
+      local _, cur = r.GetTrackStateChunk(tr, "", false)
+      local _, locals, items = M.normalize_track(cur)
+      r.SetTrackStateChunk(tr, M.build_track_chunk(hdr, locals, items), false)
     end
   end
   local names = {}
@@ -1244,6 +1419,14 @@ local function diff_local()
   for _, o in ipairs(itemOps) do ops[#ops + 1] = o end
   for _, o in ipairs(delOps) do ops[#ops + 1] = o end
 
+  for _, k in ipairs(PROJ_KEYS) do
+    local v = proj_read(k)
+    if v and v ~= S.baseProj[k] then
+      if S.baseProj[k] ~= nil or v ~= "" then ops[#ops + 1] = { t = "proj", key = k, data = v } end
+      S.baseProj[k] = v
+    end
+  end
+
   if r.CountTempoTimeSigMarkers(0) == 0 then
     local bpm = r.GetProjectTimeSignature2(0)
     if S.baseTempo and math.abs(bpm - S.baseTempo) > 1e-6 then
@@ -1269,6 +1452,7 @@ local function op_key(op)
   if t == "track" or t == "track_del" then return "t:" .. tostring(op.guid) end
   if t == "item" or t == "item_del" then return "i:" .. tostring(op.guid) end
   if t == "order" or t == "tempo" then return t end
+  if t == "proj" then return "p:" .. tostring(op.key) end
   return nil
 end
 
@@ -1324,9 +1508,14 @@ local function note_op(op)
     S.meta[g] = nil
   elseif t == "order" then
     feed_activity(op, T("order"), "order")
+  elseif t == "proj" and op.key then
+    feed_activity(op, T("proj_" .. op.key), "proj:" .. op.key)
   elseif t == "tempo" then
     feed_activity(op, T("tempo", tonumber(op.bpm) or 0), "tempo")
   elseif t == "chat" then
+    if op.fxreq and op.cid ~= S.cid then
+      S.fxRequests[op.fxreq] = { user = user, fx = op.fxname or "?" }
+    end
     feed_add({ kind = "chat", user = user, text = op.text or "" })
     if op.cid ~= S.cid then ACTIVITY.toast = { user = user, text = op.text or "", t0 = now() } end
   elseif t == "comment" and op.id then
@@ -1338,6 +1527,10 @@ local function note_op(op)
       item = op.item, itemName = op.itemName })
     if op.cid ~= S.cid then ACTIVITY.toast = { user = user, text = T("new_comment", op.text or ""), t0 = now() } end
     rebuild_markers()
+  elseif (t == "req_ok" or t == "req_no" or t == "draft_ok" or t == "draft_no") and op.name then
+    local nm = op.name ~= "" and op.name or T("no_name")
+    feed_add({ kind = "act", user = user, text = T("a_" .. t, nm, op.who or "?") })
+    if op.cid ~= S.cid then ACTIVITY.toast = { user = user, text = T("a_" .. t, nm, op.who or "?"), t0 = now() } end
   elseif t == "comment_del" and op.id then
     S.comments[op.id] = nil
     for _, e in ipairs(FEED) do if e.kind == "comment" and e.id == op.id then e.deleted = true end end
@@ -1381,28 +1574,80 @@ local function handle_files(resp)
   end
 end
 
+-- Koniec wysyłki pliku: sukces albo ponowienie za chwilę (rosnąca przerwa, bez poddawania się).
+local function upload_finished(id, ok, err)
+  S.uploads[id] = nil
+  if ok then
+    S.fileConfirmed[id] = true
+    S.uploadFails[id], S.uploadRetry[id], S.uploadProg[id] = nil, nil, nil
+    if S.err and S.err:find(T("upload_failed", ""), 1, true) then S.err = nil end
+    return
+  end
+  local n = (S.uploadFails[id] or 0) + 1
+  S.uploadFails[id] = n
+  S.uploadRetry[id] = now() + math.min(300, 10 * 2 ^ (n - 1))
+  local short = id:match("^(.-)~") or id
+  status_err(T("upload_failed", short) .. (err and (": " .. err) or ""))
+end
+
+-- Wysyłka: małe pliki jednym żądaniem, duże w częściach (postęp, ponawianie części, brak
+-- limitu rozmiaru żądania na serwerze).
+local function start_upload(id, path)
+  local size = file_size(path) or 0
+  local P = S.serverParts
+  if not P or size <= P then
+    http_upload(id, path, function(resp, err) upload_finished(id, resp and resp.ok, err or (resp and server_msg(resp))) end)
+    return
+  end
+  local parts = math.ceil(size / P)
+  local prog = S.uploadProg[id]
+  if not prog or prog.parts ~= parts then
+    prog = { part = 0, parts = parts, fails = 0 }
+    S.uploadProg[id] = prog
+  end
+  local function send_part()
+    local i = prog.part
+    local fi = io.open(path, "rb")
+    if not fi then return upload_finished(id, false) end
+    fi:seek("set", i * P)
+    local data = fi:read(P) or ""
+    fi:close()
+    local tmp = new_tmp("part")
+    write_file(tmp, data)
+    data = nil
+    http_upload(id, tmp, function(resp, err)
+      os.remove(tmp)
+      if resp and resp.ok then
+        prog.part, prog.fails = i + 1, 0
+        if resp.done or prog.part >= parts then
+          upload_finished(id, true)
+        else
+          send_part()
+        end
+      else
+        prog.fails = prog.fails + 1
+        if prog.fails <= 4 then send_part() -- ta sama część jeszcze raz
+        else upload_finished(id, false, err or (resp and server_msg(resp))) end
+      end
+    end, i, parts)
+  end
+  send_part()
+end
+
 local function pump_transfers()
   local up, down = 0, 0
   for _, st in pairs(S.uploads) do if st == "busy" then up = up + 1 end end
   for _, st in pairs(S.downloads) do if st == "busy" then down = down + 1 end end
+  local t = now()
   for id, st in pairs(S.uploads) do
-    if st == "queued" and up < 2 then
+    if st == "queued" and up < 2 and t >= (S.uploadRetry[id] or 0) then
       local p = S.fileLocal[id]
       if not p or not file_exists(p) then
         S.uploads[id] = nil
       else
         S.uploads[id] = "busy"
         up = up + 1
-        http_upload(id, p, function(resp)
-          S.uploads[id] = nil
-          if resp and resp.ok then
-            S.fileConfirmed[id] = true
-          else
-            S.uploadFails[id] = (S.uploadFails[id] or 0) + 1
-            if S.uploadFails[id] >= 3 then S.fileConfirmed[id] = true end -- poddajemy się
-            status_err(T("upload_failed", id))
-          end
-        end)
+        start_upload(id, p)
       end
     end
   end
@@ -1420,6 +1665,29 @@ local function pump_transfers()
       end)
     end
   end
+end
+
+-- rola, prośby i szkice z odpowiedzi serwera (starsze serwery ich nie wysyłają)
+local function read_review(resp)
+  S.roles = resp.roles == true
+  S.role = resp.role or "admin"
+  S.requests = resp.requests or {}
+  S.drafts = resp.drafts or {}
+  S.draftSet = {}
+  for _, d in ipairs(S.drafts) do S.draftSet[d.guid] = d end
+end
+local function decide(t, idOrGuid)
+  local op = { t = t }
+  if t == "req_ok" or t == "req_no" then op.id = idOrGuid else op.guid = idOrGuid end
+  S.outbox[#S.outbox + 1] = op
+  -- natychmiast chowamy kartę (serwer i tak przyśle nową listę)
+  if op.id then
+    for i, rq in ipairs(S.requests) do if rq.id == op.id then table.remove(S.requests, i) break end end
+  else
+    for i, d in ipairs(S.drafts) do if d.guid == op.guid then table.remove(S.drafts, i) break end end
+    S.draftSet[op.guid] = nil
+  end
+  S.nextSync = 0
 end
 
 local function do_sync()
@@ -1484,6 +1752,8 @@ local function do_sync()
     S.state, S.err = "on", nil
     S.myColor = resp.color or S.myColor
     S.users = resp.users or {}
+    S.serverParts = tonumber(resp.parts) or S.serverParts
+    read_review(resp)
     handle_files(resp)
     if resp.resync then
       start_resync()
@@ -1612,6 +1882,7 @@ function start_resync()
     for g in pairs(S.baseItems) do synced[g] = true end
     load_meta_from_state(st)
     apply_state(st, "merge", synced)
+    for k, v in pairs(st.proj or {}) do proj_apply(k, v.data) end
     S.lastSeq = tonumber(st.seq) or 0
     S.nextSync = 0
     feed_add({ kind = "act", user = "system", text = T("full_sync") })
@@ -1642,7 +1913,11 @@ local function connect()
     local localHas = r.CountTracks(0) > 0
     local mode = "host"
     if serverHas then
-      if localHas then
+      local resumed = RESUME and next(load_synced()) ~= nil
+      RESUME = false
+      if localHas and resumed then
+        mode = "merge" -- powrót do tej samej sesji (okno pokazane ponownie / restart REAPERa)
+      elseif localHas then
         local ans = r.ShowMessageBox(T("join_q", CFG.room), "REAPER Multiplayer", 3)
         if ans == 6 then
           mode = "replace"
@@ -1657,6 +1932,7 @@ local function connect()
       end
     end
     load_meta_from_state(st)
+    read_review(st)
     for _, c in ipairs(st.chat or {}) do
       feed_add({ kind = "chat", user = c.user, text = c.text, ts = math.floor(tonumber(c.ts) or os.time()) })
     end
@@ -1671,6 +1947,9 @@ local function connect()
       S.baseTempo = (r.GetProjectTimeSignature2(0))
       rebuild_markers()
       feed_add({ kind = "act", user = "system", text = T("host_msg") })
+    end
+    for k, v in pairs(st.proj or {}) do
+      if mode ~= "host" then proj_apply(k, v.data) else S.baseProj[k] = nil end
     end
     S.lastSeq = tonumber(st.seq) or 0
     -- ścieżki obecne przy dołączaniu idą do pokoju bez pytania (to jest projekt tej sesji)
@@ -1705,6 +1984,8 @@ local function open_settings()
   CFG.server, CFG.room, CFG.user, CFG.password = server, room, user, pass
   CFG.room_name = ""
   set_ext("room_name", "")
+  CFG.admin = ""
+  set_ext("admin_key", "")
   CFG.curl = curl ~= "" and curl or CFG.curl
   set_ext("server", CFG.server)
   set_ext("room", CFG.room)
@@ -1815,6 +2096,8 @@ local function button(x, y, w, h, label, kind, key)
     col(mix(C.amber, C.amberHi, hv))
   elseif kind == "ghost" then
     col(mix(C.ink, C.panel2, hv))
+  elseif kind == "danger" then
+    col(mix(C.rec, C.paper, hv * 0.15))
   else
     col(mix(C.panel2, C.raise, hv))
   end
@@ -1823,7 +2106,7 @@ local function button(x, y, w, h, label, kind, key)
     col(mix(C.line, C.amber, hv * 0.6))
     gfx.roundrect(x + inset, y + inset, w - 2 * inset - 1, h - 2 * inset - 1, (h - 2 * inset) / 2, 1)
   end
-  gfx.setfont(kind == "primary" and 5 or 2)
+  gfx.setfont((kind == "primary" or kind == "danger") and 5 or 2)
   col(kind == "primary" and C.amberInk or C.paper)
   local tw, th = gfx.measurestr(label)
   gfx.x, gfx.y = math.floor(x + (w - tw) / 2), math.floor(y + (h - th) / 2)
@@ -1993,7 +2276,8 @@ local function inspector_text()
     local m = S.meta[g]
     local take = r.GetActiveTake(it)
     local name = take and r.GetTakeName(take) or T("clip")
-    if m then return fmt(m, T("clip_label", name)) end
+    local pre = S.draftSet[g] and T("draft_label") or ""
+    if m then return pre .. fmt(m, T("clip_label", name)) end
     return T("clip_unsynced", name)
   end
   local tr = r.GetSelectedTrack(0, 0)
@@ -2001,7 +2285,7 @@ local function inspector_text()
     local m = S.meta[r.GetTrackGUID(tr)]
     local _, name = r.GetSetMediaTrackInfo_String(tr, "P_NAME", "", false)
     if name == "" then name = T("no_name") end
-    if m then return fmt(m, T("track_label", name)) end
+    if m then return (S.draftSet[r.GetTrackGUID(tr)] and T("draft_label") or "") .. fmt(m, T("track_label", name)) end
     return T("track_unsynced", name)
   end
   return T("select_hint")
@@ -2063,6 +2347,19 @@ local function send_input(asComment)
   UI.scroll = 0
 end
 
+-- Okno można schować – sesja działa dalej w tle (synchronizacja, pliki, nagrywanie).
+local function save_window()
+  if UI.hidden then return end
+  set_ext("dock", gfx.dock(-1))
+  local _, x, y, w, h = gfx.dock(-1, 0, 0, 0, 0)
+  set_ext("wnd", string.format("%d %d %d %d", x, y, w, h))
+end
+local function hide_window()
+  save_window()
+  gfx.quit()
+  UI.hidden = true
+end
+
 local function show_menu()
   gfx.x, gfx.y = mouse.x, mouse.y
   local items = {
@@ -2072,6 +2369,10 @@ local function show_menu()
     T("menu_clear"),
     (CFG.ask and "!" or "") .. T("menu_ask"),
     (next(PRIVATE) and "" or "#") .. T("menu_share_private", (function() local n = 0; for _ in pairs(PRIVATE) do n = n + 1 end; return n end)()),
+    (S.state ~= "off" and "" or "#") .. T("menu_hide"),
+    T("menu_quit"),
+    (r.CountSelectedTracks(0) > 0 and "" or "#") .. T("menu_freeze"),
+    (r.CountSelectedTracks(0) > 0 and "" or "#") .. T("menu_unfreeze"),
     "#REAPER Multiplayer v" .. VERSION,
   }
   local c = gfx.showmenu(table.concat(items, "|"))
@@ -2093,6 +2394,16 @@ local function show_menu()
   elseif c == 6 then
     for pg in pairs(PRIVATE) do PRIVATE[pg] = nil; S.known[pg] = true end
     save_private()
+    S.nextSync = 0
+  elseif c == 7 then
+    hide_window()
+  elseif c == 8 then
+    UI.quit = true
+  elseif c == 9 then
+    r.Main_OnCommand(FREEZE, 0)
+    S.nextSync = 0
+  elseif c == 10 then
+    r.Main_OnCommand(UNFREEZE, 0)
     S.nextSync = 0
   end
 end
@@ -2133,6 +2444,7 @@ local function merged_users()
       by[u.name] = e
       list[#list + 1] = e
     end
+    if u.admin then e.admin = true end
     if u.app then
       e.app = true
     else
@@ -2210,7 +2522,7 @@ local function person_card(x, y, u, maxw)
   gfx.setfont(3)
   local nw = gfx.measurestr(u.name)
   gfx.setfont(7)
-  local b1 = u.reaper and gfx.measurestr("REAPER") + 12 or 0
+  local b1 = (u.reaper and gfx.measurestr("REAPER") + 12 or 0) + (u.admin and gfx.measurestr(T("host_badge")) + 16 or 0)
   local b2 = u.app and gfx.measurestr("Sesja") + 12 or 0
   gfx.setfont(2)
   local sw = gfx.measurestr(state) + (u.play and not u.rec and 12 or 0)
@@ -2241,6 +2553,7 @@ local function person_card(x, y, u, maxw)
     text_at(bx + 6, y + 9, label, 7, c)
     bx = bx + bw + 4
   end
+  if u.admin then badge(T("host_badge"), C.paper) end
   if u.reaper then badge("REAPER", C.amber) end
   if u.app then badge("Sesja", C.signal) end
   local sx = x + 46
@@ -2275,8 +2588,107 @@ local function draw_toast(x, y, w)
   text_at(x + 52 + nw, y + 11 + dy, ellipsize(ts.text, w - 64 - nw), 1, C.paper, a)
 end
 
+-- Wtyczki, których ktoś nie ma: REAPER zostawia je jako „offline”. Nie da się (i nie wolno)
+-- przesłać samej wtyczki – zamiast tego właściciel renderuje ścieżkę do audio (zamrożenie),
+-- a wszyscy słyszą efekt. Wtyczka i jej licencja zostają na jego komputerze.
+local function scan_missing_fx()
+  if not r.TrackFX_GetOffline or now() < S.nextFxScan then return end
+  S.nextFxScan = now() + 3
+  local list = {}
+  for i = 0, r.CountTracks(0) - 1 do
+    local tr = r.GetTrack(0, i)
+    local g = r.GetTrackGUID(tr)
+    if S.meta[g] and S.meta[g].author ~= CFG.user then -- cudze ścieżki
+      for fx = 0, r.TrackFX_GetCount(tr) - 1 do
+        if r.TrackFX_GetOffline(tr, fx) then
+          local _, fxn = r.TrackFX_GetFXName(tr, fx, "")
+          local _, trn = r.GetTrackName(tr)
+          fxn = (fxn or "?"):gsub("^%u+i?:%s*", ""):gsub("%s*%(.-%)%s*$", "")
+          if not S.fxHidden[g .. fxn] then list[#list + 1] = { guid = g, fx = fxn, track = trn } end
+        end
+      end
+    end
+  end
+  S.missingFx = list
+end
+local function render_for_others(g)
+  local tr = track_map()[g]
+  if not tr then return end
+  for i = 0, r.CountTracks(0) - 1 do r.SetTrackSelected(r.GetTrack(0, i), false) end
+  r.SetTrackSelected(tr, true)
+  r.Main_OnCommand(FREEZE, 0)
+  S.fxRequests[g] = nil
+  S.nextSync = 0
+end
+
+-- karta z pytaniem i przyciskami; przyciski: { {label, kind, key, fn}, ... }
+local function decision_card(x, y, w, t, text, buttons, accent)
+  local ch = 70
+  local pulse = 0.5 + 0.5 * math.sin(t * 3)
+  col(mix(C.panel, accent, 0.10))
+  rrect(x, y, w, ch, 12)
+  col(accent, 0.55 + 0.45 * pulse)
+  rrect(x, y + 10, 3, ch - 20, 1)
+  gfx.setfont(3)
+  text_at(x + 14, y + 9, ellipsize(text, w - 28), 3, C.paper)
+  local bx = x + 14
+  for i, b in ipairs(buttons) do
+    gfx.setfont(i == 1 and 5 or 2)
+    local bw = gfx.measurestr(b[1]) + 26
+    if bx + bw > x + w - 8 then break end
+    if button(bx, y + ch - 32, bw, 24, b[1], b[2], b[3]) then b[4]() end
+    bx = bx + bw + 6
+  end
+  return y + ch + 8
+end
+
+-- prośby o usunięcie i szkice: gospodarz decyduje, edytor widzi, co czeka
+local function draw_review(pad, y, W, t)
+  if not S.roles then return y end
+  local w = W - 2 * pad
+  if S.role == "admin" then
+    local rq = S.requests[1]
+    if rq then
+      local kind = T(rq.t == "track_del" and "k_track" or "k_item")
+      local more = #S.requests > 1 and ("  (" .. T("ask_more", #S.requests - 1) .. ")") or ""
+      y = decision_card(pad, y, w, t, T("req_q", rq.user or "?", kind, (rq.name ~= "" and rq.name) or T("no_name")) .. more, {
+        { T("req_yes"), "danger", "rq_y", function() decide("req_ok", rq.id) end },
+        { T("req_no"), "ghost", "rq_n", function() decide("req_no", rq.id) end },
+      }, C.rec)
+    end
+    local d = S.drafts[1]
+    if d then
+      local kind = T(d.kind == "track" and "k_track1" or "k_item1")
+      y = decision_card(pad, y, w, t, T("draft_q", kind, (d.name ~= "" and d.name) or T("no_name"), d.user or "?"), {
+        { T("draft_ok"), "primary", "df_y", function() decide("draft_ok", d.guid) end },
+        { T("draft_no"), "ghost", "df_n", function() decide("draft_no", d.guid) end },
+        #S.drafts > 1 and { T("draft_all", #S.drafts), "soft", "df_a", function()
+          local all = {}
+          for _, x in ipairs(S.drafts) do all[#all + 1] = x.guid end
+          for _, g in ipairs(all) do decide("draft_ok", g) end
+        end } or nil,
+      }, C.signal)
+    end
+  else
+    local mine, reqs = 0, 0
+    for _, d in ipairs(S.drafts) do if d.user == CFG.user then mine = mine + 1 end end
+    for _, rq in ipairs(S.requests) do if rq.user == CFG.user then reqs = reqs + 1 end end
+    if mine + reqs > 0 then
+      gfx.setfont(2)
+      col(mix(C.panel, C.signal, 0.08))
+      rrect(pad, y, w, 26, 9)
+      col(C.signal)
+      arc(pad + 14, y + 13, 5, t * 4, t * 4 + 4.2, 1.5)
+      text_at(pad + 26, y + 6, ellipsize(T("editor_wait", mine, reqs), w - 36), 2, C.paper2)
+      y = y + 34
+    end
+  end
+  return y
+end
+
 local function draw()
   local W, H = gfx.w, gfx.h
+  UI.compact = H < 260 -- małe okno = tryb mini: nagłówek, osoby online i decyzje
   local t = now()
   UI.dt = UI.lastT and math.max(0.001, math.min(0.1, t - UI.lastT)) or 1 / 30
   UI.lastT = t
@@ -2313,13 +2725,32 @@ local function draw()
   end
   local mw = gfx.measurestr(T("menu")) + 26
   if button(W - pad - bw - 6 - mw, 12, mw, 26, T("menu"), "ghost", "menu") then show_menu() end
-  status_pill(W - pad, 44, st)
+  if st ~= "off" then
+    local hw = gfx.measurestr(T("hide")) + 26
+    if button(W - pad - bw - 12 - mw - hw, 12, hw, 26, T("hide"), "ghost", "hide") then hide_window() end
+  end
+  local spw = status_pill(W - pad, 44, st)
+  if S.roles and st == "on" then
+    gfx.setfont(7)
+    local lbl = T(S.role == "admin" and "role_admin" or "role_editor"):upper()
+    local rw = gfx.measurestr(lbl) + 16
+    local rc = S.role == "admin" and C.amber or C.signal
+    col(mix(C.panel2, rc, 0.28))
+    rrect(W - pad - spw - 6 - rw, 48, rw, 15, 7)
+    text_at(W - pad - spw - 6 - rw + 8, 49, lbl, 7, rc)
+  end
   local y = 72
 
   -- pasek stanu: transfery audio, nagrywanie, błędy
   if nup + ndown + npend > 0 or #S.deferred > 0 then
     gfx.setfont(2)
     local msg = #S.deferred > 0 and T("recording_wait"):gsub("^%s+", "") or T("pending", nup, ndown, npend):gsub("^%s+", "")
+    for id, pr in pairs(S.uploadProg) do
+      if S.uploads[id] then
+        msg = msg .. "  ·  ↑ " .. (id:match("^(.-)~") or id) .. " " .. math.floor(pr.part / pr.parts * 100) .. "%"
+        break
+      end
+    end
     local c = #S.deferred > 0 and C.rec or C.signal
     local mw2 = gfx.measurestr(msg) + 34
     col(mix(C.ink, c, 0.14))
@@ -2341,6 +2772,18 @@ local function draw()
 
   -- osoby w sesji
   local people = merged_users()
+  if UI.compact then
+    -- tryb mini: same awatary osób w jednej linii
+    local ax = pad + 12
+    for _, u in ipairs(people) do
+      if ax > W - pad - 80 then break end
+      avatar(ax, y + 12, 11, u.name, u.color)
+      ax = ax + 26
+    end
+    gfx.setfont(2)
+    text_at(ax + 2, y + 5, T("online_n", #people), 2, C.muted)
+    y = y + 32
+  else
   text_at(pad, y, T("in_session"), 3, C.paper2)
   gfx.setfont(3)
   if #people > 0 then text_at(pad + gfx.measurestr(T("in_session")) + 8, y + 1, tostring(#people), 2, C.dim) end
@@ -2367,7 +2810,9 @@ local function draw()
     y = y + rowH + 12
   end
 
+  end
   -- inspektor: kto dodał zaznaczony klip / ścieżkę
+  if not UI.compact then
   col(C.panel)
   rrect(pad, y, W - 2 * pad, 30, 10)
   col(C.amber)
@@ -2376,6 +2821,7 @@ local function draw()
   gfx.setfont(2)
   text_at(pad + 30, y + 8, ellipsize(inspector_text(), W - 2 * pad - 42), 2, C.paper2)
   y = y + 40
+  end
 
   -- pytanie: nowa ścieżka – dodać do pokoju?
   local g = S.heldOrder[1]
@@ -2407,6 +2853,33 @@ local function draw()
     end
     y = y + ch + 10
   end
+
+  y = draw_review(pad, y, W, t)
+  if st == "on" then
+    scan_missing_fx()
+    local m = S.missingFx[1]
+    if m then
+      y = decision_card(pad, y, W - 2 * pad, t, T("fx_missing", m.fx, m.track), {
+        { T("fx_ask"), "primary", "fx_ask", function()
+          S.outbox[#S.outbox + 1] = { t = "chat", text = T("fx_ask_chat", m.track, m.fx), fxreq = m.guid, fxname = m.fx }
+          S.fxHidden[m.guid .. m.fx] = true
+          table.remove(S.missingFx, 1)
+        end },
+        { T("fx_hide"), "ghost", "fx_hide", function() S.fxHidden[m.guid .. m.fx] = true; table.remove(S.missingFx, 1) end },
+      }, C.amber)
+    end
+    for g, rq in pairs(S.fxRequests) do
+      local tr = track_map()[g]
+      if not tr then S.fxRequests[g] = nil break end
+      local _, trn = r.GetTrackName(tr)
+      y = decision_card(pad, y, W - 2 * pad, t, T("fx_req", rq.user, rq.fx, trn), {
+        { T("fx_render"), "primary", "fx_render", function() render_for_others(g) end },
+        { T("fx_later"), "ghost", "fx_later", function() S.fxRequests[g] = nil end },
+      }, C.signal)
+      break
+    end
+  end
+  if UI.compact then return end
 
   -- zakładki z przesuwającym się podświetleniem
   local tabsW = W - 2 * pad
@@ -2526,6 +2999,10 @@ local function check_handoff(t)
     if not CFG.ask then for _, hg in ipairs(S.heldOrder) do approve_track(hg) end end
   end
   local room = (v.room or ""):gsub("[^%w%._%-]", "")
+  if v.admin and (room == CFG.room or v.join ~= "0") then
+    CFG.admin = safe_key(v.admin)
+    set_ext("admin_key", CFG.admin)
+  end
   if v.join == "0" or (v.server or "") == "" or room == "" then return end
   if v.server == CFG.server and room == CFG.room and (first or S.state == "on") then return end
   -- przy starcie: aplikacja wybrała inną sesję niż zapisana w REAPERze -> przechodzimy do niej
@@ -2555,8 +3032,24 @@ local function main_loop()
     end
   end
 
+  if UI.quit then
+    if S.state ~= "off" then disconnect(true) end
+    return
+  end
+  if UI.hidden then
+    -- w tle: bez okna, ale sesja dalej się synchronizuje
+    if S.state == "off" then return end
+    r.defer(main_loop)
+    return
+  end
   update_mouse()
-  if not handle_keys() then return end -- okno zamknięte
+  if not handle_keys() then -- okno zamknięte krzyżykiem
+    if S.state ~= "off" then
+      UI.hidden = true -- sesja trwa w tle
+      r.defer(main_loop)
+    end
+    return
+  end
   -- Rysujemy płynnie tylko, gdy coś się dzieje (mysz, klawiatura, animacje, transfery);
   -- w spoczynku ~5 klatek/s – REAPER nie traci czasu na przerysowywanie okna.
   local moved = mouse.x ~= UI.mx or mouse.y ~= UI.my or mouse.l or mouse.r or mouse.wheel ~= 0 or gfx.w ~= UI.gw or gfx.h ~= UI.gh
@@ -2575,10 +3068,12 @@ local function main_loop()
 end
 
 local function on_exit()
+  local was = S and S.state ~= "off" and not UI.quit
   if S and S.state ~= "off" then save_synced() end
-  set_ext("dock", gfx.dock(-1))
-  local _, x, y, w, h = gfx.dock(-1, 0, 0, 0, 0)
-  set_ext("wnd", string.format("%d %d %d %d", x, y, w, h))
+  -- „resume”: po ponownym uruchomieniu akcji (albo REAPERa) wracamy do sesji bez pytań
+  set_ext("resume", was and "1" or "0")
+  save_window()
+  if r.set_action_options then r.set_action_options(8) end
 end
 
 local function init()
@@ -2597,6 +3092,9 @@ local function init()
   gfx.setfont(6, font, 14, string.byte("b")) -- inicjał w dużym awatarze
   gfx.setfont(7, font, 11, string.byte("b")) -- plakietki, mały awatar
   r.atexit(on_exit)
+  -- ponowne uruchomienie akcji: zamknij instancję w tle i otwórz okno od nowa (REAPER 7+)
+  if r.set_action_options then r.set_action_options(1 | 2 | 4) end
+  RESUME = get_ext("resume", "0") == "1"
   if CFG.user == "" then
     if open_settings() then connect() end
   else

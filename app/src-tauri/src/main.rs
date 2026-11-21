@@ -135,6 +135,7 @@ fn install_mod(st: State<AppState>, resource: Option<String>, autostart: bool) -
         lang: i18n::current(),
         ask: cfg.ask_tracks,
         name: &cfg.room_name,
+        admin: cfg.admin_keys.get(&cfg.room).map(String::as_str).unwrap_or(""),
     });
     let rep = reaper::install(&resource, autostart, conn)?;
     let mut c = st.config.lock().unwrap();
@@ -181,14 +182,15 @@ fn session_connect(app: AppHandle, st: State<AppState>) -> Result<(), String> {
         return Err(i18n::t("fill_profile"));
     }
     if let Some(res) = cfg.reaper_resource.as_deref() {
-        let rc = reaper::Conn { server: &cfg.server, room: &cfg.room, user: &cfg.nick, password: &cfg.password, lang: i18n::current(), ask: cfg.ask_tracks, name: &cfg.room_name };
+        let rc = reaper::Conn { server: &cfg.server, room: &cfg.room, user: &cfg.nick, password: &cfg.password, lang: i18n::current(), ask: cfg.ask_tracks, name: &cfg.room_name, admin: cfg.admin_keys.get(&cfg.room).map(String::as_str).unwrap_or("") };
         let res = std::path::Path::new(res);
         let _ = reaper::write_handoff(res, &rc, true);
         if !reaper::is_running() {
             let _ = reaper::write_settings(res, &rc);
         }
     }
-    let conn = session::Conn { server: cfg.server, room: cfg.room, user: cfg.nick, password: cfg.password };
+    let admin = cfg.admin_keys.get(&cfg.room).cloned().unwrap_or_default();
+    let conn = session::Conn { server: cfg.server, room: cfg.room, user: cfg.nick, password: cfg.password, admin };
     let mut s = st.session.lock().unwrap();
     if let Some(old) = s.take() {
         old.stop();
@@ -219,7 +221,7 @@ async fn room_info(server: String, room: String) -> Result<Value, String> {
 fn push_reaper_prefs(st: State<AppState>) {
     let cfg = st.config.lock().unwrap().clone();
     if let Some(res) = cfg.reaper_resource.as_deref() {
-        let rc = reaper::Conn { server: &cfg.server, room: &cfg.room, user: &cfg.nick, password: &cfg.password, lang: i18n::current(), ask: cfg.ask_tracks, name: &cfg.room_name };
+        let rc = reaper::Conn { server: &cfg.server, room: &cfg.room, user: &cfg.nick, password: &cfg.password, lang: i18n::current(), ask: cfg.ask_tracks, name: &cfg.room_name, admin: cfg.admin_keys.get(&cfg.room).map(String::as_str).unwrap_or("") };
         let res = std::path::Path::new(res);
         let _ = reaper::write_handoff(res, &rc, false);
         if !reaper::is_running() {
@@ -243,6 +245,20 @@ fn session_disconnect(st: State<AppState>) {
 #[tauri::command]
 fn session_state(st: State<AppState>) -> Option<session::Summary> {
     st.session.lock().unwrap().as_ref().map(|s| s.summary())
+}
+
+/// Decyzja gospodarza: req_ok / req_no (id prośby) albo draft_ok / draft_no (guid szkicu).
+#[tauri::command]
+fn session_decide(st: State<AppState>, t: String, id: String) -> Result<(), String> {
+    let s = st.session.lock().unwrap();
+    let s = s.as_ref().ok_or_else(|| i18n::t("not_connected"))?;
+    let op = match t.as_str() {
+        "req_ok" | "req_no" => json!({"t": t, "id": id}),
+        "draft_ok" | "draft_no" => json!({"t": t, "guid": id}),
+        _ => return Err(i18n::t("bad_url")),
+    };
+    s.send(op);
+    Ok(())
 }
 
 #[tauri::command]
@@ -502,6 +518,7 @@ fn main() {
             session_disconnect,
             session_state,
             send_chat,
+            session_decide,
             send_comment,
             delete_comment,
             fetch_audio,

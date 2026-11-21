@@ -24,7 +24,7 @@
   const session = {
     status: "on", error: null, room: "nowy_singiel", server: "http://100.101.102.103:8765", me: "Ania", my_color: "#f58231",
     users: [
-      { cid: "a", name: "Ania", color: "#f58231", pos: 72.4, play: false, rec: false, sel: "Wokal główny", app: false },
+      { cid: "a", name: "Ania", color: "#f58231", pos: 72.4, play: false, rec: false, sel: "Wokal główny", app: false, admin: true },
       { cid: "b", name: "Bartek", color: "#46f0f0", pos: 41.2, play: false, rec: true, sel: "Gitara akustyczna", app: false },
       { cid: "c", name: "Kuba", color: "#bcf60c", pos: 12.0, play: true, rec: false, sel: "", app: false },
       { cid: "a2", name: "Ania", color: "#f58231", pos: 0, play: false, rec: false, sel: "", app: true },
@@ -57,6 +57,9 @@
     comments: [],
     seq: 120,
     colors,
+    roles: true, role: params.get("editor") ? "editor" : "admin",
+    requests: [{ id: "r1", t: "item_del", guid: "i3", user: "Bartek", name: "gitara_intro" }],
+    drafts: [{ kind: "track", guid: "t5", user: "Kuba", name: "Bębny" }, { kind: "item", guid: "i6", user: "Kuba", name: "chorki_oo", track: "t2" }],
   };
   session.comments = session.feed.filter((e) => e.kind === "comment");
   if (params.get("err")) {
@@ -99,6 +102,7 @@
     session_state: () => (connected && !params.get("nosess") ? session : null),
     send_chat: ({ text }) => { session.feed.push(ev("chat", "Ania", text, 0)); setTimeout(() => emit("session", { ...session, feed: [...session.feed] }), 200); },
     send_comment: () => null,
+    session_decide: ({ t: tt, id }) => { session.requests = session.requests.filter((r) => r.id !== id); session.drafts = session.drafts.filter((d) => d.guid !== id); setTimeout(() => emit("session", { ...session }), 150); },
     delete_comment: () => null,
     fetch_audio: () => Promise.reject("Podgląd w przeglądarce nie odtwarza nagrań."),
     check_update: () => ({ current: "1.0.0", latest: "v1.0.0", newer: false, notes: "", releases: [] }),
