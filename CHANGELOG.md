@@ -3,6 +3,19 @@
 Nagłówki wersji aplikacji mają postać `## Sesja X.Y.Z` – sekcja trafia automatycznie
 do opisu wydania na GitHubie.
 
+## Sesja 1.6.1
+
+- Naprawione „Session not found” u osób dołączających przez link. Mod w REAPERze zostawał przy starym
+  pokoju („studio”), jeśli aplikacja wybrała sesję, zanim REAPER się uruchomił. Teraz mod przy starcie
+  sam przechodzi do sesji wybranej w aplikacji.
+- Aplikacja po aktualizacji sama podmienia moda w REAPERze na nową wersję i podpowiada, żeby zrestartować
+  REAPERa.
+- Zamiast „Session not found” mod pisze, co zrobić: dołącz w aplikacji Sesja przez link.
+
+## Mod 1.6.1
+
+- Przejęcie sesji z aplikacji także przy starcie REAPERa; czytelny komunikat dla nieistniejącej sesji.
+
 ## Sesja 1.6.0
 
 - **Pozwolenia na ścieżki**: gdy dodasz nową ścieżkę w REAPERze, okno Sesji pyta „Dodaj do pokoju”,

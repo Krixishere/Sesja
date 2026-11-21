@@ -1456,6 +1456,19 @@ AFTER.settings = () => {
   });
 };
 
+/* Nowa wersja aplikacji niesie nowy mod – podmieniamy go sam, żeby mod i aplikacja
+   zawsze mówiły tym samym językiem (np. przejmowanie sesji z linku). */
+async function autoUpdateMod() {
+  const r = S.reaper;
+  if (!r?.script_installed || !r.resource || r.script_version === r.bundled_version) return;
+  try {
+    const rep = await invoke("install_mod", { resource: r.resource, autostart: r.autostart });
+    S.reaper = rep.info;
+    toast({ title: th("mod_auto_updated", { v: rep.info.script_version }), text: rep.info.running ? t("mod_restart_reaper") : "", timeout: 9000 });
+    if (S.view === "reaper") renderView(false);
+  } catch { /* np. brak uprawnień – zostaje przycisk w zakładce REAPER */ }
+}
+
 /* ------------------------------------------------------------------ akcje */
 let lastChatCount = 0;
 function markSeen(sum) {
@@ -1777,6 +1790,7 @@ async function boot() {
     else if (S.cfg.nick && S.cfg.server && S.cfg.room) connect().catch(() => {});
   }
   if (S.cfg.auto_update) setTimeout(() => checkUpdates(false), 2500);
+  if (S.cfg.onboarded) autoUpdateMod();
   checkFirewall();
 }
 

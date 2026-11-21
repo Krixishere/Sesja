@@ -10,7 +10,7 @@
 --
 --   Wymagania: REAPER 6.0+, program curl (wbudowany w Windows 10/11 i macOS).
 
-local VERSION = "1.6.0"
+local VERSION = "1.6.1"
 local M = {}
 
 -------------------------------------------------------------------------------
@@ -473,7 +473,8 @@ local L = {
     upload_failed = "Nie udało się wysłać pliku %s", conn_error = "Błąd połączenia", server_error = "Błąd serwera",
     no_curl = "Nie można uruchomić curl (%s)", no_answer = "Brak odpowiedzi serwera (%s)",
     state_error = "Błąd pobierania stanu", cant_connect = "Nie można połączyć",
-    srv_bad_password = "Złe hasło serwera", srv_bad_room = "Niepoprawna nazwa pokoju",
+    srv_bad_password = "Złe hasło", srv_bad_room = "Niepoprawna nazwa pokoju",
+    srv_no_room = "Nie ma takiej sesji. Dołącz w aplikacji Sesja: Studio → Dołącz przez link",
     undo_remote = "Multiplayer: zmiany od %s", undo_audio = "Multiplayer: pobrane audio",
     undo_clear = "Multiplayer: wyczyszczenie projektu przed wczytaniem", undo_load = "Multiplayer: wczytanie projektu z serwera",
     full_sync = "pełna synchronizacja z serwerem", disconnected_msg = "rozłączono",
@@ -512,7 +513,8 @@ local L = {
     upload_failed = "Could not upload file %s", conn_error = "Connection error", server_error = "Server error",
     no_curl = "Cannot start curl (%s)", no_answer = "No answer from the server (%s)",
     state_error = "Could not load the project state", cant_connect = "Cannot connect",
-    srv_bad_password = "Wrong server password", srv_bad_room = "Invalid room name",
+    srv_bad_password = "Wrong password", srv_bad_room = "Invalid room name",
+    srv_no_room = "This session doesn’t exist. Join in the Sesja app: Studio → Join with a link",
     undo_remote = "Multiplayer: changes from %s", undo_audio = "Multiplayer: downloaded audio",
     undo_clear = "Multiplayer: clear project before loading", undo_load = "Multiplayer: load project from server",
     full_sync = "full sync with the server", disconnected_msg = "disconnected",
@@ -2513,7 +2515,7 @@ local function check_handoff(t)
   if not f then handoffSeen = handoffSeen or ""; return end
   local body = f:read("*a") or ""
   f:close()
-  if handoffSeen == nil then handoffSeen = body; return end -- przy starcie ustawienia ma już extstate
+  local first = handoffSeen == nil
   if body == handoffSeen then return end
   handoffSeen = body
   local v = {}
@@ -2525,7 +2527,8 @@ local function check_handoff(t)
   end
   local room = (v.room or ""):gsub("[^%w%._%-]", "")
   if v.join == "0" or (v.server or "") == "" or room == "" then return end
-  if v.server == CFG.server and room == CFG.room and S.state == "on" then return end
+  if v.server == CFG.server and room == CFG.room and (first or S.state == "on") then return end
+  -- przy starcie: aplikacja wybrała inną sesję niż zapisana w REAPERze -> przechodzimy do niej
   CFG.server, CFG.room, CFG.password = v.server, room, safe_key(v.password)
   CFG.room_name = (v.name or ""):sub(1, 60)
   set_ext("room_name", CFG.room_name)
