@@ -89,6 +89,12 @@ local function set_track_chunk(tr, chunk)
   for _, ic in ipairs(items) do tr.items[#tr.items + 1] = new_item(ic, tr) end
   local g = M.chunk_field(table.concat(h, "\n"), "TRACKID")
   if g then tr.guid = g end
+  -- wtyczki: każda pełna podmiana chunku tworzy je od nowa (nowy egzemplarz, gałki domyślne)
+  local n = 0
+  for _, l in ipairs(h) do if l:match("^%s*<JS ") then n = n + 1 end end
+  tr.fx = {}
+  FXGEN = (FXGEN or 0) + 1
+  for i = 1, n do tr.fx[i] = { gen = FXGEN, p = { 0.5, 0.5, 0.5 } } end
   bump()
 end
 
@@ -271,6 +277,11 @@ function r.SetTempoTimeSigMarker(_, _, pos, _, _, bpm, num, den, lin)
 end
 function r.DeleteTempoTimeSigMarker(_, i) table.remove(P.tempos, i + 1) bump() return true end
 function r.GetMasterTrack() return P.master end
+function r.TrackFX_GetCount(tr) return #(tr.fx or {}) end
+function r.TrackFX_GetNumParams(tr, fx) return #tr.fx[fx + 1].p end
+function r.TrackFX_GetParamNormalized(tr, fx, p) return tr.fx[fx + 1].p[p + 1] end
+function r.TrackFX_SetParamNormalized(tr, fx, p, v) tr.fx[fx + 1].p[p + 1] = v return true end
+function r.GetLastTouchedFX() if P.touch then return true, P.touch[1], P.touch[2], P.touch[3] end return false end
 function r.SetCurrentBPM(_, bpm) P.bpm = bpm bump() end
 function r.GetProjectTimeSignature2() return P.bpm, 4 end
 function r.PreventUIRefresh() end
@@ -415,10 +426,15 @@ if ROLE == "A" then
     table.insert(h, #h, ">")
     bump()
   end)
-  -- Ania ma już projekt: ścieżka "Wokal" z nagraniem
+  -- Ania ma już projekt: ścieżka "Wokal" z nagraniem i wtyczką
   local wav = DIR .. "/project/vocal take.wav"
   write_wav(wav, 300000)
   local tr = make_track("Wokal")
+  table.insert(tr.header, #tr.header, "<FXCHAIN")
+  table.insert(tr.header, #tr.header, "<JS autotune \"\"")
+  table.insert(tr.header, #tr.header, ">")
+  table.insert(tr.header, #tr.header, ">")
+  tr.fx = { { gen = 0, p = { 0.5, 0.5, 0.5 } } }
   P.tracks[1] = tr
   tr.items[1] = new_item(audio_item_chunk(wav, 2, 4), tr)
   bump()
@@ -453,6 +469,16 @@ else
   at(8, function()
     -- Bartek zmienia nazwę swojej ścieżki
     r.GetSetMediaTrackInfo_String(find_track("Gitara"), "P_NAME", "Gitara akustyczna", true)
+  end)
+  at(11, function()
+    -- Bartek kręci gałką wtyczki na wokalu (REAPER nie zmienia przy tym licznika projektu)
+    local w = find_track("Wokal")
+    if w and w.fx and w.fx[1] then
+      w.fx[1].p[2] = 0.75
+      local idx = 0
+      for i, t in ipairs(P.tracks) do if t == w then idx = i end end
+      P.touch = { idx, 0, 1 }
+    end
   end)
   at(9, function()
     -- Bartek: szyna z pogłosem i wysyłka z gitary
@@ -500,6 +526,7 @@ for _, tr in ipairs(P.tracks) do
   local t = {
     guid = tr.guid, name = M.unquote(get_line(h, "NAME") or ""), volpan = get_line(h, "VOLPAN"),
     rec = get_line(h, "REC"), items = {}, auxrecv = get_line(h, "AUXRECV"),
+    fx = tr.fx,
   }
   for _, it in ipairs(tr.items) do
     local file = it.chunk:match('FILE "([^"]+)"')

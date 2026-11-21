@@ -3,6 +3,20 @@
 Nagłówki wersji aplikacji mają postać `## Sesja X.Y.Z` – sekcja trafia automatycznie
 do opisu wydania na GitHubie.
 
+## Sesja 1.7.1
+
+- **Mix w obie strony, na żywo.** Kręcenie gałkami wtyczek (kompresor, EQ, pogłos, Auto-Tune…)
+  na ścieżkach i na masterze dociera do innych w ciągu 1–3 sekund.
+  - Odbiorca dostaje same wartości parametrów: wtyczka gra dalej, bez trzasku i bez zamykania jej okna.
+  - Mod wychwytuje też zmiany, których REAPER nie zgłasza jako zmiany projektu, i co kilka sekund
+    porównuje projekt, żeby nic nie umknęło.
+
+## Mod 1.7.1
+
+- Parametry wtyczek ścieżek i mastera synchronizowane na żywo (TrackFX_SetParamNormalized) zamiast
+  podmiany całej ścieżki.
+- Wykrywanie przekręcenia gałki (ostatnio dotknięty parametr) i okresowe porównanie projektu.
+
 ## Sesja 1.7.0
 
 - **Gospodarz i edytorzy.** Kto zakłada sesję („Utwórz sesję”), jest gospodarzem, a reszta to

@@ -126,5 +126,19 @@ local id1, size = M.file_id(tmp)
 check(size == 150000 and id1:match("~150000~%x%x%x%x%x%x%x%x"), "file_id: " .. tostring(id1))
 os.remove(tmp)
 
+-- szkielet ścieżki: bez stanu wtyczek i SESJA_FXP, z automatyką parametrów
+local h1 = table.concat({
+  "<TRACK", "NAME Wokal", "VOLPAN 1 0 -1 -1 1", "<FXCHAIN", "BYPASS 0 0 0",
+  "<VST \"VST: ReaComp\" reacomp.dll 0 \"\" 1",  "QUFBQQ==", "QkJCQg==", ">",
+  "<PARMENV 1:0", "PT 0 0.5 0", ">", "FXID {1}", ">", "SESJA_FXP 0 0.1000,0.2000", ">",
+}, "\n")
+local h2 = h1:gsub("QUFBQQ==", "Q0NDQw=="):gsub("0.1000,0.2000", "0.3000,0.2000")
+local h3 = h1:gsub("PT 0 0.5 0", "PT 0 0.9 0")
+check(M.fx_skeleton(h1) == M.fx_skeleton(h2), "fx_skeleton: zmiana stanu wtyczki i gałek nie zmienia szkieletu")
+check(M.fx_skeleton(h1) ~= M.fx_skeleton(h3), "fx_skeleton: zmiana automatyki parametru zmienia szkielet")
+check(not M.fx_skeleton(h1):find("QUFBQQ", 1, true) and M.fx_skeleton(h1):find("<VST", 1, true), "fx_skeleton: bez danych binarnych, z nagłówkiem wtyczki")
+check(M.fxp_lines(h1) ~= M.fxp_lines(h2), "fxp_lines: wykrywa zmianę gałki")
+check(not M.build_track_chunk(h1, {}, {}):find("SESJA_FXP", 1, true), "build_track_chunk: SESJA_FXP nie trafia do REAPERa")
+
 print(fails == 0 and "\nWSZYSTKIE TESTY OK" or ("\nBŁĘDY: " .. fails))
 os.exit(fails == 0 and 0 or 1)

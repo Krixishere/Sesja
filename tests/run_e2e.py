@@ -112,6 +112,10 @@ def main():
                 return None
             return r["tracks"][int(bus["auxrecv"].split()[0])]["name"]
         check(send_src(a) == "Gitara akustyczna", "wysyłka gitara → pogłos u Ani wskazuje właściwą ścieżkę")
+        wa = next(t for t in a["tracks"] if t["name"] == "Wokal")
+        fx = (wa.get("fx") or [{}])[0]
+        check(abs(fx.get("p", [0, 0])[1] - 0.75) < 0.001, "gałka wtyczki przekręcona przez Bartka słychać u Ani")
+        check(fx.get("gen") == 0, "wtyczka u Ani nie została przeładowana (zmiana gałki na żywo)")
 
         # stan serwera
         req = urllib.request.Request(server + f"/api/state?room={room}", headers={"X-RMP-Key": os.environ.get("RMP_PASSWORD", ""), "User-Agent": "sesja-e2e"})

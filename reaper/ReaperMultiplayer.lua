@@ -10,7 +10,7 @@
 --
 --   Wymagania: REAPER 6.0+, program curl (wbudowany w Windows 10/11 i macOS).
 
-local VERSION = "1.7.0"
+local VERSION = "1.7.1"
 local M = {}
 
 -------------------------------------------------------------------------------
@@ -270,8 +270,42 @@ function M.normalize_track(chunk)
 end
 
 --- Składa chunk ścieżki z nagłówka (np. otrzymanego z serwera), lokalnych linii i klipów.
+-- Parametry wtyczek dopisujemy do nagłówka ścieżki jako linie SESJA_FXP (tylko w Sesji,
+-- nigdy do REAPERa). Dzięki nim odbiorca ustawia gałki na żywo, bez przeładowania wtyczki.
+local PLUGIN_BLOCK = { VST = true, VST3 = true, AU = true, JS = true, DX = true, CLAP = true, LV2 = true, VIDEO_EFFECT = true }
+function M.strip_fxp(header) return (header:gsub("\nSESJA_FXP [^\n]*", "")) end
+function M.fxp_lines(header)
+  local t = {}
+  for l in (header .. "\n"):gmatch("(SESJA_FXP [^\n]*)\n") do t[#t + 1] = l end
+  return table.concat(t, "\n")
+end
+--- Nagłówek bez wnętrza bloków wtyczek (stan binarny) i bez SESJA_FXP – „szkielet” do porównań.
+function M.fx_skeleton(header)
+  local out, depth, fxdepth, plug = {}, 0, nil, 0
+  for _, line in ipairs(split_lines(header)) do
+    if line:sub(1, 10) == "SESJA_FXP " then
+      -- pomijamy
+    elseif plug > 0 then
+      if line:sub(1, 1) == "<" then plug = plug + 1 elseif line == ">" then plug = plug - 1 end
+      if plug == 0 then out[#out + 1] = line; depth = depth - 1 end
+    else
+      out[#out + 1] = line
+      if line:sub(1, 1) == "<" then
+        depth = depth + 1
+        local tok = line:match("^<(%S+)")
+        if fxdepth and depth == fxdepth + 1 and PLUGIN_BLOCK[tok] then plug = 1 end
+        if tok == "FXCHAIN" or tok == "FXCHAIN_REC" then fxdepth = depth end
+      elseif line == ">" then
+        if fxdepth and depth == fxdepth then fxdepth = nil end
+        depth = depth - 1
+      end
+    end
+  end
+  return table.concat(out, "\n")
+end
+
 function M.build_track_chunk(header, locals, items)
-  local h = split_lines(header)
+  local h = split_lines(M.strip_fxp(header))
   local out = { h[1] or "<TRACK" }
   for _, l in ipairs(locals or {}) do out[#out + 1] = l end
   local last = #h
@@ -973,6 +1007,48 @@ local function sends_to_index(header, tmap)
   return out, unresolved
 end
 
+-- wartości parametrów wtyczek ścieżki (lub mastera) jako linie SESJA_FXP
+local MAX_FX_PARAMS = 512
+local function fxp_for(tr)
+  if not r.TrackFX_GetCount then return "" end
+  local lines = {}
+  for fx = 0, r.TrackFX_GetCount(tr) - 1 do
+    local n = r.TrackFX_GetNumParams(tr, fx)
+    if n <= MAX_FX_PARAMS then
+      local v = {}
+      for p = 0, n - 1 do v[p + 1] = string.format("%.4f", r.TrackFX_GetParamNormalized(tr, fx, p)) end
+      lines[#lines + 1] = "SESJA_FXP " .. fx .. " " .. table.concat(v, ",")
+    else
+      lines[#lines + 1] = "SESJA_FXP " .. fx .. " -"
+    end
+  end
+  return table.concat(lines, "\n")
+end
+local function with_fxp(header, tr)
+  local f = fxp_for(tr)
+  if f == "" or header:sub(-2) ~= "\n>" then return header end
+  return header:sub(1, -2) .. f .. "\n>"
+end
+-- ustawia gałki wtyczek z linii SESJA_FXP; false = nie da się (inna liczba wtyczek / parametrów)
+local function apply_fxp(tr, header)
+  if not r.TrackFX_SetParamNormalized then return false end
+  local cnt = r.TrackFX_GetCount(tr)
+  for l in (header .. "\n"):gmatch("SESJA_FXP ([^\n]*)\n") do
+    local fx, list = l:match("^(%d+) (.*)$")
+    fx = tonumber(fx)
+    if not fx or fx >= cnt or list == "-" then return false end
+    local p = 0
+    for v in list:gmatch("[^,]+") do
+      local want = tonumber(v) or 0
+      if math.abs(r.TrackFX_GetParamNormalized(tr, fx, p) - want) > 0.00015 then
+        r.TrackFX_SetParamNormalized(tr, fx, p, want)
+      end
+      p = p + 1
+    end
+  end
+  return true
+end
+
 local function snapshot()
   local snap = { tracks = {}, items = {}, order = {} }
   local held = {}
@@ -989,7 +1065,7 @@ local function snapshot()
     do
     local _, chunk = r.GetTrackStateChunk(tr, "", false)
     local header, _, items = M.normalize_track(chunk)
-    header = sends_to_guid(header)
+    header = with_fxp(sends_to_guid(header), tr)
     snap.tracks[g] = { header = header, idx = i }
     snap.order[#snap.order + 1] = g
     for _, ic in ipairs(items) do
@@ -1175,8 +1251,9 @@ local function fnum(x) return string.format("%.10g", x or 0) end
 local function proj_read(key)
   if key == "master" then
     if not r.GetMasterTrack then return nil end
-    local _, chunk = r.GetTrackStateChunk(r.GetMasterTrack(0), "", false)
-    return (M.normalize_track(chunk or ""))
+    local m = r.GetMasterTrack(0)
+    local _, chunk = r.GetTrackStateChunk(m, "", false)
+    return with_fxp((M.normalize_track(chunk or "")), m)
   elseif key == "markers" then
     if not r.EnumProjectMarkers3 then return nil end
     local out, i = {}, 0
@@ -1205,8 +1282,15 @@ local function proj_apply(key, data)
   if key == "master" and r.GetMasterTrack then
     local m = r.GetMasterTrack(0)
     local _, cur = r.GetTrackStateChunk(m, "", false)
-    local _, locals = M.normalize_track(cur or "")
-    if data ~= "" then r.SetTrackStateChunk(m, M.build_track_chunk(data, locals, {}), false) end
+    local h, locals = M.normalize_track(cur or "")
+    if data ~= "" then
+      if M.fx_skeleton(h) == M.fx_skeleton(data) and apply_fxp(m, data) then
+        -- tylko gałki na masterze
+      elseif M.strip_fxp(h) ~= M.strip_fxp(data) then
+        r.SetTrackStateChunk(m, M.build_track_chunk(data, locals, {}), false)
+        apply_fxp(m, data)
+      end
+    end
   elseif key == "markers" and r.EnumProjectMarkers3 then
     local i, del = 0, {}
     while true do
@@ -1262,8 +1346,14 @@ local function apply_remote_ops(ops, undoName)
       else
         local _, cur = r.GetTrackStateChunk(tr, "", false)
         local h, locals, items = M.normalize_track(cur)
-        if sends_to_guid(h) ~= op.chunk and not fast_track(tr, h, hdr) then
+        local mine = sends_to_guid(h)
+        local plain = M.strip_fxp(op.chunk)
+        if op.po and M.fx_skeleton(mine) == M.fx_skeleton(op.chunk) and apply_fxp(tr, op.chunk) then
+          -- same gałki: ustawione na żywo, wtyczka gra dalej
+        elseif M.strip_fxp(mine) ~= plain and not fast_track(tr, h, M.strip_fxp(hdr)) then
           r.SetTrackStateChunk(tr, M.build_track_chunk(hdr, locals, items), false)
+        elseif r.TrackFX_SetParamNormalized then
+          apply_fxp(tr, op.chunk)
         end
       end
       aff.tracks[g] = true
@@ -1386,8 +1476,14 @@ local function diff_local()
 
   local trackOps, itemOps, delOps = {}, {}, {}
   for g, t in pairs(snap.tracks) do
-    if S.baseTracks[g] ~= t.header then
-      trackOps[#trackOps + 1] = { t = "track", guid = g, chunk = t.header, _idx = t.idx }
+    local base = S.baseTracks[g]
+    if base ~= t.header then
+      local op = { t = "track", guid = g, chunk = t.header, _idx = t.idx }
+      -- zmieniły się tylko gałki wtyczek -> odbiorca ustawi je na żywo, bez przeładowania
+      if base and M.fx_skeleton(base) == M.fx_skeleton(t.header) and M.fxp_lines(base) ~= M.fxp_lines(t.header) then
+        op.po = true
+      end
+      trackOps[#trackOps + 1] = op
     end
   end
   table.sort(trackOps, function(a, b) return a._idx < b._idx end)
@@ -1705,7 +1801,20 @@ local function do_sync()
       apply_remote_ops(d)
     end
     local cc = r.GetProjectStateChangeCount(0)
-    if cc ~= S.lastCC then
+    -- kręcenie gałką wtyczki nie zawsze zmienia licznik projektu – pilnujemy ostatnio
+    -- dotkniętego parametru i co kilka sekund i tak porównujemy projekt
+    local touched = false
+    if r.GetLastTouchedFX then
+      local ok, tn, fxn, pn = r.GetLastTouchedFX()
+      if ok then
+        local tr = tn == 0 and r.GetMasterTrack(0) or r.GetTrack(0, tn - 1)
+        local v = tr and (fxn >> 16) == 0 and r.TrackFX_GetParamNormalized(tr, fxn, pn) or 0
+        local key = tn .. ":" .. fxn .. ":" .. pn .. ":" .. string.format("%.4f", v)
+        if key ~= S.lastTouch then S.lastTouch, touched = key, true end
+      end
+    end
+    if now() > (S.nextFullDiff or 0) then S.nextFullDiff, touched = now() + 3, true end
+    if cc ~= S.lastCC or touched then
       for _, o in ipairs(diff_local()) do ops[#ops + 1] = o end
       S.lastCC = r.GetProjectStateChangeCount(0)
     end

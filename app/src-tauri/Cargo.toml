@@ -1,6 +1,6 @@
 [package]
 name = "sesja"
-version = "1.7.0"
+version = "1.7.1"
 description = "Sesja – wspólne nagrywanie w REAPERze przez internet"
 authors = ["krixishere"]
 license = "MIT"
