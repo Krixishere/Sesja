@@ -3,6 +3,28 @@
 Nagłówki wersji aplikacji mają postać `## Sesja X.Y.Z` – sekcja trafia automatycznie
 do opisu wydania na GitHubie.
 
+## Sesja 1.6.0
+
+- **Pozwolenia na ścieżki**: gdy dodasz nową ścieżkę w REAPERze, okno Sesji pyta „Dodaj do pokoju”,
+  „Tylko u mnie” albo „Zawsze dodawaj”. Dopóki nie zdecydujesz, inni jej nie widzą, a ścieżki
+  „tylko u mnie” nigdy nie wychodzą z Twojego komputera. Przełącznik jest w Ustawieniach → Pozwolenia
+  w pokoju i w menu moda.
+- **Koniec przycinania i „migotania” widoków** (Jak połączyć, REAPER, Zmiany, Ustawienia). Przyczyną było
+  rozmycie tła pod każdym panelem i animowana zorza, przez które okno przerysowywało się w każdej
+  klatce. Tło jest teraz statyczne, panele mają pełne kolory, a miernik i fala pod nazwą sesji ruszają się
+  tylko wtedy, gdy ktoś coś robi.
+- Spokojniejszy wygląd: krótsze, prostsze wejście widoków, bez rozmycia.
+- Naprawione: kręciołki ładowania znowu się kręcą (nadpisywała je animacja ramki karty).
+- Mod pokazuje nazwę sesji zamiast kodu z linku.
+
+## Mod 1.6.0
+
+- Pytanie o nowe ścieżki („Dodaj do pokoju” / „Tylko u mnie” / „Zawsze dodawaj”), ścieżki prywatne
+  zapisane w projekcie, opcje w menu.
+- Okno rysuje się płynnie tylko przy ruchu myszy i aktywności, a w spoczynku kilka razy na sekundę.
+  REAPER ma więcej mocy na audio.
+- Nazwa sesji z aplikacji w nagłówku.
+
 ## Sesja 1.5.1
 
 - **„Otwórz w Sesji” na stronie zaproszenia**: kliknięcie otwiera aplikację (albo wyciąga ją

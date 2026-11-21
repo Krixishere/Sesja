@@ -1401,6 +1401,11 @@ RENDER.settings = () => {
       </div>
     </form>
     <section class="panel">
+      <h2>${t("perm_title")}</h2>
+      <label class="switch"><input type="checkbox" id="ask-tracks" ${c.ask_tracks !== false ? "checked" : ""}><i></i><span>${t("perm_ask")}</span></label>
+      <p class="muted" style="margin-top:10px">${t("perm_ask_d")}</p>
+    </section>
+    <section class="panel">
       <h2>${t("updates")}</h2>
       <label class="switch"><input type="checkbox" id="auto-update" ${c.auto_update ? "checked" : ""}><i></i><span>${t("auto_update")}</span></label>
       <div class="row" style="margin-top:18px"><button class="btn ghost" data-act="check-update">${icon("refresh")}${t("check_now")}</button>
@@ -1443,6 +1448,11 @@ AFTER.settings = () => {
   });
   $("#auto-update").addEventListener("change", async (e) => {
     S.cfg = await invoke("save_config", { cfg: { ...S.cfg, auto_update: e.target.checked } });
+  });
+  $("#ask-tracks").addEventListener("change", async (e) => {
+    S.cfg = await invoke("save_config", { cfg: { ...S.cfg, ask_tracks: e.target.checked } });
+    invoke("push_reaper_prefs").catch(() => {});
+    toast({ title: t(e.target.checked ? "perm_on" : "perm_off") });
   });
 };
 
@@ -1650,8 +1660,8 @@ function startLive() {
     LIVE.level = Math.max(0, LIVE.level - dt * 0.35);
     drawRoomWave();
     drawMeter();
-    const idle = LIVE.level <= 0 && !(S.session && S.session.status === "on");
-    LIVE.raf = idle || document.hidden ? 0 : requestAnimationFrame(loop);
+    // pętla działa tylko przy aktywności innych osób; w ciszy zostaje jedna nieruchoma klatka
+    LIVE.raf = LIVE.level <= 0 || document.hidden ? 0 : requestAnimationFrame(loop);
   };
   LIVE.raf = requestAnimationFrame(loop);
 }
@@ -1709,34 +1719,8 @@ const BLOBS = [
   { c: [120, 90, 220], x: 0.55, y: 0.6, r: 0.33, sx: 0.06, sy: 0.04, p: 4 },
   { c: [240, 82, 79], x: 0.92, y: 0.9, r: 0.22, sx: 0.04, sy: 0.05, p: 1 },
 ];
-function startAurora() {
-  const cv = $("#aurora");
-  if (!cv || reduceMotion || AURORA.raf) return;
-  const ctx = cv.getContext("2d");
-  let last = 0;
-  const loop = (now) => {
-    AURORA.raf = document.hidden ? 0 : requestAnimationFrame(loop);
-    if (now - last < 33) return; // ~30 kl./s wystarczy na tak wolny ruch
-    const dt = last ? (now - last) / 1000 : 0;
-    last = now;
-    AURORA.t += dt;
-    const w = (cv.width = 160), h = (cv.height = 100);
-    ctx.clearRect(0, 0, w, h);
-    const boost = 0.55 + LIVE.level * 0.6;
-    for (const b of BLOBS) {
-      const x = (b.x + Math.sin(AURORA.t * b.sx + b.p) * 0.12) * w;
-      const y = (b.y + Math.cos(AURORA.t * b.sy + b.p) * 0.1) * h;
-      const r = b.r * w;
-      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-      g.addColorStop(0, `rgba(${b.c.join(",")},${0.32 * boost})`);
-      g.addColorStop(1, `rgba(${b.c.join(",")},0)`);
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, w, h);
-    }
-  };
-  AURORA.raf = requestAnimationFrame(loop);
-}
-document.addEventListener("visibilitychange", () => { if (!document.hidden) startAurora(); });
+function startAurora() { /* 1.6: tło jest statycznym gradientem w CSS */ }
+
 
 /* reflektor pod kursorem na kartach */
 let spotRaf = 0, spotEv = null;

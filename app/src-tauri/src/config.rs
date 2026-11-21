@@ -27,6 +27,8 @@ pub struct Config {
     pub cloud_url: String,
     /// Nazwa sesji założonej przez „Utwórz sesję” (pokój to wtedy losowy kod z linku).
     pub room_name: String,
+    /// Mod pyta, zanim nowa ścieżka trafi do pokoju.
+    pub ask_tracks: bool,
 }
 
 /// Domyślny, wspólny serwer Sesji – wszyscy zakładają i dołączają do sesji tutaj.
@@ -50,6 +52,7 @@ impl Default for Config {
             lang: String::new(),
             cloud_url: String::new(),
             room_name: String::new(),
+            ask_tracks: true,
         }
     }
 }

@@ -10,7 +10,7 @@
 --
 --   Wymagania: REAPER 6.0+, program curl (wbudowany w Windows 10/11 i macOS).
 
-local VERSION = "1.5.0"
+local VERSION = "1.6.0"
 local M = {}
 
 -------------------------------------------------------------------------------
@@ -457,6 +457,8 @@ local CFG = {
   colorize = get_ext("colorize", "1") == "1",
   lang = get_ext("lang", "pl"), -- ustawia aplikacja Sesja; pl albo en (inne -> en)
   hidden = get_ext("hidden", "1") == "1", -- Windows: curl bez migającego okna konsoli
+  ask = get_ext("ask_tracks", "1") == "1", -- pytaj, zanim nowa ścieżka trafi do pokoju
+  room_name = get_ext("room_name", ""), -- nazwa sesji z aplikacji (pokój to wtedy kod z linku)
 }
 
 -------------------------------------------------------------------------------
@@ -489,6 +491,10 @@ local L = {
     select_hint = "Zaznacz klip lub ścieżkę, żeby zobaczyć, kto je dodał.",
     menu_settings = "Ustawienia połączenia…", menu_colorize = "Koloruj moje nowe klipy moim kolorem",
     menu_resync = "Wymuś pełną synchronizację", menu_clear = "Wyczyść czat lokalnie",
+    ask_track = "Nowa ścieżka „%s” – dodać do pokoju?", ask_more = "i jeszcze %d",
+    ask_add = "Dodaj do pokoju", ask_private = "Tylko u mnie", ask_always = "Zawsze dodawaj",
+    ask_hint = "Dopóki nie zdecydujesz, inni jej nie widzą.",
+    menu_ask = "Pytaj przed dodaniem nowej ścieżki do pokoju", menu_share_private = "Dodaj do pokoju ścieżki „tylko u mnie” (%d)",
     st_on = "Połączono", st_connecting = "Łączenie…", st_error = "Problem z połączeniem", st_off = "Rozłączono",
     pending = "   ↑%d  ↓%d  oczekuje: %d", recording_wait = "   nagrywanie – zmiany innych czekają",
     connect = "Połącz", disconnect = "Rozłącz", menu = "Menu",
@@ -524,6 +530,10 @@ local L = {
     select_hint = "Select a clip or track to see who added it.",
     menu_settings = "Connection settings…", menu_colorize = "Colour my new clips with my colour",
     menu_resync = "Force full sync", menu_clear = "Clear chat locally",
+    ask_track = "New track “%s” – add it to the room?", ask_more = "and %d more",
+    ask_add = "Add to room", ask_private = "Only for me", ask_always = "Always add",
+    ask_hint = "Others won’t see it until you decide.",
+    menu_ask = "Ask before adding a new track to the room", menu_share_private = "Add my “only for me” tracks to the room (%d)",
     st_on = "Connected", st_connecting = "Connecting…", st_error = "Connection problem", st_off = "Disconnected",
     pending = "   ↑%d  ↓%d  waiting: %d", recording_wait = "   recording – others’ changes are waiting",
     connect = "Connect", disconnect = "Disconnect", menu = "Menu",
@@ -563,6 +573,8 @@ local function reset_state()
     uploads = {}, downloads = {}, want = {}, uploadFails = {},
     lastPending = 0, lastSyncedSave = 0, syncedDirty = false,
     serverInfo = "",
+    known = {}, -- ścieżki, które już są w pokoju albo zostały zatwierdzone
+    held = {}, heldOrder = {}, -- nowe ścieżki czekające na decyzję: guid -> nazwa
   }
 end
 reset_state()
@@ -850,11 +862,39 @@ local function item_map()
   return m
 end
 
+-- Ścieżki „tylko u mnie”: zapisane w projekcie, nigdy nie trafiają do pokoju.
+local PRIVATE = {}
+local function load_private()
+  PRIVATE = {}
+  local _, v = r.GetProjExtState(0, SEC, "private")
+  for g in (v or ""):gmatch("[^,]+") do PRIVATE[g] = true end
+end
+local function save_private()
+  local l = {}
+  for g in pairs(PRIVATE) do l[#l + 1] = g end
+  r.SetProjExtState(0, SEC, "private", table.concat(l, ","))
+end
+load_private()
+
+-- czy ścieżka ma czekać na pytanie „dodać do pokoju?”
+local function needs_ask(g)
+  return CFG.ask and S.state == "on" and not S.known[g] and not S.meta[g] and not S.baseTracks[g]
+end
+
 local function snapshot()
   local snap = { tracks = {}, items = {}, order = {} }
+  local held = {}
   for i = 0, r.CountTracks(0) - 1 do
     local tr = r.GetTrack(0, i)
     local g = r.GetTrackGUID(tr)
+    if PRIVATE[g] then goto continue end
+    if S.held[g] or needs_ask(g) then
+      local _, nm = r.GetTrackName(tr)
+      held[g] = nm
+      goto continue
+    end
+    S.known[g] = true
+    do
     local _, chunk = r.GetTrackStateChunk(tr, "", false)
     local header, _, items = M.normalize_track(chunk)
     snap.tracks[g] = { header = header, idx = i }
@@ -863,9 +903,21 @@ local function snapshot()
       local norm, refs, ig = M.normalize_item(ic, path_to_ref)
       if ig then snap.items[ig] = { chunk = norm, track = g, refs = refs } end
     end
+    end
+    ::continue::
   end
+  -- kolejka pytań: nowe na końcu, usunięte znikają
+  local order = {}
+  for _, g in ipairs(S.heldOrder) do if held[g] then order[#order + 1] = g end end
+  for g in pairs(held) do if not S.held[g] then order[#order + 1] = g end end
+  if #order > #S.heldOrder then ACTIVITY.level = math.min(1, ACTIVITY.level + 0.3) end
+  S.held, S.heldOrder = held, order
   return snap
 end
+
+-- odpowiedzi na pytanie o nową ścieżkę
+local function approve_track(g) S.held[g] = nil; S.known[g] = true; S.nextSync = 0 end
+local function keep_private(g) S.held[g] = nil; PRIVATE[g] = true; save_private() end
 
 local function track_name(header, guid)
   local n = M.chunk_field(header or "", "NAME")
@@ -1233,6 +1285,7 @@ end
 
 local function note_op(op)
   local t, g, user = op.t, op.guid, op.user or "?"
+  if t == "track" and g then S.known[g] = true end
   if op.cid ~= S.cid then ACTIVITY.level = math.min(1, ACTIVITY.level + 0.35) end
   local ts = os.time()
   if t == "track" then
@@ -1618,6 +1671,9 @@ local function connect()
       feed_add({ kind = "act", user = "system", text = T("host_msg") })
     end
     S.lastSeq = tonumber(st.seq) or 0
+    -- ścieżki obecne przy dołączaniu idą do pokoju bez pytania (to jest projekt tej sesji)
+    load_private()
+    for i = 0, r.CountTracks(0) - 1 do S.known[r.GetTrackGUID(r.GetTrack(0, i))] = true end
     S.state = "on"
     S.nextSync = 0
   end, 60)
@@ -1645,6 +1701,8 @@ local function open_settings()
     return false
   end
   CFG.server, CFG.room, CFG.user, CFG.password = server, room, user, pass
+  CFG.room_name = ""
+  set_ext("room_name", "")
   CFG.curl = curl ~= "" and curl or CFG.curl
   set_ext("server", CFG.server)
   set_ext("room", CFG.room)
@@ -2010,6 +2068,8 @@ local function show_menu()
     (CFG.colorize and "!" or "") .. T("menu_colorize"),
     (S.state == "on" and "" or "#") .. T("menu_resync"),
     T("menu_clear"),
+    (CFG.ask and "!" or "") .. T("menu_ask"),
+    (next(PRIVATE) and "" or "#") .. T("menu_share_private", (function() local n = 0; for _ in pairs(PRIVATE) do n = n + 1 end; return n end)()),
     "#REAPER Multiplayer v" .. VERSION,
   }
   local c = gfx.showmenu(table.concat(items, "|"))
@@ -2025,6 +2085,13 @@ local function show_menu()
     if not S.inflight then start_resync() end
   elseif c == 4 then
     for k in pairs(FEED) do FEED[k] = nil end
+  elseif c == 5 then
+    CFG.ask = not CFG.ask
+    set_ext("ask_tracks", CFG.ask and "1" or "0")
+  elseif c == 6 then
+    for pg in pairs(PRIVATE) do PRIVATE[pg] = nil; S.known[pg] = true end
+    save_private()
+    S.nextSync = 0
   end
 end
 
@@ -2033,6 +2100,7 @@ local function handle_keys()
     local c = gfx.getchar()
     if c == -1 then return false end
     if c == 0 then break end
+    UI.typed = true
     if c == 13 then
       send_input(false)
     elseif c == 8 then
@@ -2226,7 +2294,7 @@ local function draw()
   draw_vu(30, 40, 16)
   text_at(56, 12, "Sesja", 4, C.paper)
   gfx.setfont(2)
-  local sub = T("subtitle", CFG.room)
+  local sub = T("subtitle", CFG.room_name ~= "" and CFG.room_name or CFG.room)
   local nup, ndown, npend = 0, 0, 0
   for _ in pairs(S.uploads) do nup = nup + 1 end
   for _ in pairs(S.downloads) do ndown = ndown + 1 end
@@ -2306,6 +2374,37 @@ local function draw()
   gfx.setfont(2)
   text_at(pad + 30, y + 8, ellipsize(inspector_text(), W - 2 * pad - 42), 2, C.paper2)
   y = y + 40
+
+  -- pytanie: nowa ścieżka – dodać do pokoju?
+  local g = S.heldOrder[1]
+  if g and S.held[g] then
+    local ch = 74
+    local pulse = 0.5 + 0.5 * math.sin(t * 3)
+    col(mix(C.panel, C.amber, 0.10))
+    rrect(pad, y, W - 2 * pad, ch, 12)
+    col(C.amber, 0.55 + 0.45 * pulse)
+    rrect(pad, y + 10, 3, ch - 20, 1)
+    gfx.setfont(3)
+    local q = T("ask_track", S.held[g] ~= "" and S.held[g] or T("no_name"))
+    if #S.heldOrder > 1 then q = q .. "  (" .. T("ask_more", #S.heldOrder - 1) .. ")" end
+    text_at(pad + 14, y + 9, ellipsize(q, W - 2 * pad - 28), 3, C.paper)
+    gfx.setfont(5)
+    local bx, by2 = pad + 14, y + ch - 34
+    local w1 = gfx.measurestr(T("ask_add")) + 26
+    if button(bx, by2, w1, 26, T("ask_add"), "primary", "ask_add") then approve_track(g) end
+    bx = bx + w1 + 6
+    gfx.setfont(2)
+    local w2 = gfx.measurestr(T("ask_private")) + 26
+    if button(bx, by2, w2, 26, T("ask_private"), "ghost", "ask_priv") then keep_private(g) end
+    bx = bx + w2 + 6
+    local w3 = gfx.measurestr(T("ask_always")) + 26
+    if bx + w3 < W - pad - 8 and button(bx, by2, w3, 26, T("ask_always"), "soft", "ask_always") then
+      CFG.ask = false
+      set_ext("ask_tracks", "0")
+      for _, hg in ipairs(S.heldOrder) do approve_track(hg) end
+    end
+    y = y + ch + 10
+  end
 
   -- zakładki z przesuwającym się podświetleniem
   local tabsW = W - 2 * pad
@@ -2419,10 +2518,17 @@ local function check_handoff(t)
   handoffSeen = body
   local v = {}
   for k, val in body:gmatch("([%w_]+)=([^\r\n]*)") do v[k] = val end
+  if v.ask_tracks == "0" or v.ask_tracks == "1" then
+    CFG.ask = v.ask_tracks == "1"
+    set_ext("ask_tracks", v.ask_tracks)
+    if not CFG.ask then for _, hg in ipairs(S.heldOrder) do approve_track(hg) end end
+  end
   local room = (v.room or ""):gsub("[^%w%._%-]", "")
-  if (v.server or "") == "" or room == "" then return end
+  if v.join == "0" or (v.server or "") == "" or room == "" then return end
   if v.server == CFG.server and room == CFG.room and S.state == "on" then return end
   CFG.server, CFG.room, CFG.password = v.server, room, safe_key(v.password)
+  CFG.room_name = (v.name or ""):sub(1, 60)
+  set_ext("room_name", CFG.room_name)
   if (v.user or "") ~= "" then CFG.user = v.user:sub(1, 40) end
   for _, k in ipairs({ "server", "room", "user", "password" }) do set_ext(k, CFG[k]) end
   if S.state ~= "off" then disconnect(true) end
@@ -2448,8 +2554,20 @@ local function main_loop()
 
   update_mouse()
   if not handle_keys() then return end -- okno zamknięte
-  draw()
-  gfx.update()
+  -- Rysujemy płynnie tylko, gdy coś się dzieje (mysz, klawiatura, animacje, transfery);
+  -- w spoczynku ~5 klatek/s – REAPER nie traci czasu na przerysowywanie okna.
+  local moved = mouse.x ~= UI.mx or mouse.y ~= UI.my or mouse.l or mouse.r or mouse.wheel ~= 0 or gfx.w ~= UI.gw or gfx.h ~= UI.gh
+  UI.mx, UI.my, UI.gw, UI.gh = mouse.x, mouse.y, gfx.w, gfx.h
+  if moved or UI.typed then UI.busyUntil = t + 0.8; UI.typed = false end
+  local lastFeed = FEED[#FEED]
+  local busy = t < (UI.busyUntil or 0) or ACTIVITY.level > 0 or ACTIVITY.toast ~= nil
+    or next(S.uploads) ~= nil or next(S.downloads) ~= nil or S.state == "connecting" or S.heldOrder[1] ~= nil
+    or (lastFeed and t - (lastFeed.t0 or 0) < 1)
+  if busy or t - (UI.lastDraw or 0) > 0.2 then
+    UI.lastDraw = t
+    draw()
+    gfx.update()
+  end
   r.defer(main_loop)
 end
 

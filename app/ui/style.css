@@ -359,7 +359,7 @@ p { margin: 0; }
 .ob-body > *:nth-child(3) { animation-delay: 100ms; }
 .ob-body > *:nth-child(4) { animation-delay: 150ms; }
 .ob-body > *:nth-child(5) { animation-delay: 200ms; }
-@keyframes obIn { from { opacity: 0; transform: translateY(10px); filter: blur(3px); } }
+@keyframes obIn { from { opacity: 0; transform: translateY(10px); } }
 .ob-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .lang-select { width: auto; min-width: 150px; padding: 8px 32px 8px 12px; cursor: pointer; appearance: none;
   background: var(--ink-2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238e95ab' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 12px center; }
@@ -540,7 +540,7 @@ body { background: radial-gradient(140% 90% at 70% -10%, #18213b 0%, var(--ink) 
 @media (hover: hover) and (pointer: fine) { .btn.primary:hover::after { transform: translateX(120%); transition: transform 700ms var(--ease-out); } }
 
 /* wejście widoku: lekkie rozmycie i uniesienie */
-@keyframes rise { from { opacity: 0; transform: translateY(14px) scale(0.99); filter: blur(6px); } }
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } }
 .view.enter > .head { animation: rise 520ms var(--ease-out) backwards; }
 
 /* nagłówek Studia jako scena z żywą falą */
@@ -565,9 +565,8 @@ body { background: radial-gradient(140% 90% at 70% -10%, #18213b 0%, var(--ink) 
   content: ""; position: absolute; inset: -1px; border-radius: inherit; padding: 1.5px; pointer-events: none; opacity: 1;
   background: conic-gradient(from var(--spin), rgba(243, 167, 59, 0) 0deg, rgba(243, 167, 59, 0.9) 60deg, rgba(95, 201, 181, 0.7) 120deg, rgba(243, 167, 59, 0) 180deg, rgba(243, 167, 59, 0) 360deg);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
-  animation: spin 6s linear infinite;
+  --spin: 200deg;
 }
-@keyframes spin { to { --spin: 360deg; } }
 .choice-hero .addr { margin: 0; }
 
 /* kreator chmury */
@@ -629,3 +628,24 @@ details.more[open] > .choice-grid { animation: more-in .4s cubic-bezier(.2,.8,.2
   100% { box-shadow: 0 0 0 0 rgba(95,201,181,0); }
 }
 @media (prefers-reduced-motion: reduce) { #link-form.invited { animation: none; } }
+
+/* ============================================================ 1.6: lżej i płynniej
+   Rozmycie tła (backdrop-filter) pod każdym panelem + animowana zorza zmuszały WebView
+   do przerysowania wszystkich paneli w każdej klatce – stąd przycinanie i „migotanie”.
+   Teraz tło jest statyczne, panele mają pełne kolory, a animacje używają tylko
+   transform/opacity. */
+.aurora { display: none; }
+body {
+  background:
+    radial-gradient(60% 50% at 85% 0%, rgba(243, 167, 59, 0.10), transparent 70%),
+    radial-gradient(50% 45% at 10% 100%, rgba(95, 201, 181, 0.08), transparent 70%),
+    radial-gradient(140% 90% at 70% -10%, #18213b 0%, var(--ink) 55%);
+  background-attachment: fixed;
+}
+.side, .panel, .clip, .step, .cmt, .donate button, .toast { backdrop-filter: none; -webkit-backdrop-filter: none; }
+.side { background: #0b1020; }
+.panel, .clip, .step, .cmt, .donate button { background: linear-gradient(180deg, #1a2340, #161e35); }
+.toast { background: var(--panel-2); }
+.spot::after { display: none; }
+.view.enter .panel, .view.enter .step, .view.enter .clip, .view.enter .cmt, .view.enter > .head { animation-duration: 320ms; }
+.panel, .clip, .step, .cmt { contain: layout paint; }

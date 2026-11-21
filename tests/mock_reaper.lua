@@ -135,6 +135,10 @@ function r.GetProjectPath() return DIR .. "/project" end
 function r.CountTracks() return #P.tracks end
 function r.GetTrack(_, i) return P.tracks[i + 1] end
 function r.GetTrackGUID(tr) return tr.guid end
+function r.GetTrackName(tr)
+  for _, l in ipairs(tr.header) do local n = l:match('^%s*NAME "?([^"]*)"?') if n then return true, n end end
+  return true, ""
+end
 function r.GetTrackStateChunk(tr) return true, track_chunk(tr) end
 function r.SetTrackStateChunk(tr, c) set_track_chunk(tr, c) return true end
 function r.GetSetMediaTrackInfo_String(tr, k, v, set)
@@ -343,6 +347,8 @@ P.ext[S .. "server"] = SERVER
 P.ext[S .. "room"] = os.getenv("RMP_ROOM") or "test"
 P.ext[S .. "user"] = ROLE == "A" and "Ania" or "Bartek"
 P.ext[S .. "interval"] = "0.3"
+-- RMP_ASK=1: mod pyta o nowe ścieżki (bez odpowiedzi nowe ścieżki zostają lokalne)
+P.ext[S .. "ask_tracks"] = os.getenv("RMP_ASK") or "0"
 P.ext[S .. "password"] = os.getenv("RMP_PASSWORD") or ""
 P.ext[S .. "lang"] = ROLE == "A" and "pl" or "en" -- Ania po polsku, Bartek po angielsku
 os.execute('mkdir -p "' .. DIR .. '/project"')

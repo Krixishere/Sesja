@@ -133,6 +133,8 @@ fn install_mod(st: State<AppState>, resource: Option<String>, autostart: bool) -
         user: &cfg.nick,
         password: &cfg.password,
         lang: i18n::current(),
+        ask: cfg.ask_tracks,
+        name: &cfg.room_name,
     });
     let rep = reaper::install(&resource, autostart, conn)?;
     let mut c = st.config.lock().unwrap();
@@ -179,9 +181,9 @@ fn session_connect(app: AppHandle, st: State<AppState>) -> Result<(), String> {
         return Err(i18n::t("fill_profile"));
     }
     if let Some(res) = cfg.reaper_resource.as_deref() {
-        let rc = reaper::Conn { server: &cfg.server, room: &cfg.room, user: &cfg.nick, password: &cfg.password, lang: i18n::current() };
+        let rc = reaper::Conn { server: &cfg.server, room: &cfg.room, user: &cfg.nick, password: &cfg.password, lang: i18n::current(), ask: cfg.ask_tracks, name: &cfg.room_name };
         let res = std::path::Path::new(res);
-        let _ = reaper::write_handoff(res, &rc);
+        let _ = reaper::write_handoff(res, &rc, true);
         if !reaper::is_running() {
             let _ = reaper::write_settings(res, &rc);
         }
@@ -210,6 +212,20 @@ async fn room_info(server: String, room: String) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || session::room_info(&server, &room))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// Przekazuje bieżące ustawienia (np. „pytaj o nowe ścieżki”) do działającego moda.
+#[tauri::command]
+fn push_reaper_prefs(st: State<AppState>) {
+    let cfg = st.config.lock().unwrap().clone();
+    if let Some(res) = cfg.reaper_resource.as_deref() {
+        let rc = reaper::Conn { server: &cfg.server, room: &cfg.room, user: &cfg.nick, password: &cfg.password, lang: i18n::current(), ask: cfg.ask_tracks, name: &cfg.room_name };
+        let res = std::path::Path::new(res);
+        let _ = reaper::write_handoff(res, &rc, false);
+        if !reaper::is_running() {
+            let _ = reaper::write_settings(res, &rc);
+        }
+    }
 }
 
 #[tauri::command]
@@ -482,6 +498,7 @@ fn main() {
             room_info,
             public_server,
             take_deep_link,
+            push_reaper_prefs,
             session_disconnect,
             session_state,
             send_chat,
