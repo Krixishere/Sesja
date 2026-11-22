@@ -130,7 +130,8 @@ def main():
               "serwer: klip Ani ostatnio edytowany przez Bartka")
         if not external:
             files = os.listdir(os.path.join(tmp, "data", "test", "files"))
-            check(len(files) == 2, f"serwer: 2 pliki audio ({files})")
+            check(any(f.startswith("vocal_take~") for f in files) and any(f.startswith("gitara~%d~" % (int(os.environ.get("RMP_BIG") or 200000) + 60044)) for f in files),
+                  f"serwer: pełne wersje plików audio ({files})")
 
         print("\nWSZYSTKIE TESTY OK" if not fails else f"\nBŁĘDY: {len(fails)}")
         return 0 if not fails else 1

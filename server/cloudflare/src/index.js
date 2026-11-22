@@ -476,7 +476,21 @@ export class Room extends DurableObject {
     };
     const check = ids(b.check), want = ids(b.want);
     if (check) { const h = await has(check); resp.missing = check.filter((id) => !h.has(id)); }
-    if (want) { const h = await has(want); resp.available = want.filter((id) => h.has(id)); }
+    if (want) {
+      const h = await has(want);
+      resp.available = want.filter((id) => h.has(id));
+      // postęp plików, które ktoś właśnie wysyła w częściach (odbiorca widzi procenty)
+      const waiting = want.filter((id) => !h.has(id)).slice(0, 20);
+      if (waiting.length) {
+        const got = await this.ctx.storage.get(waiting.map((id) => "fp:" + id));
+        const progress = {};
+        for (const [k, v] of got) {
+          const id = k.slice(3), size = Number((id.match(/~(\d+)~/) || [])[1]) || 0;
+          progress[id] = [v.length, Math.ceil(size / PART)];
+        }
+        if (Object.keys(progress).length) resp.progress = progress;
+      }
+    }
     return json(resp);
   }
 
@@ -495,6 +509,9 @@ export class Room extends DurableObject {
     if (!id || !SAFE.test(id)) return err(400, "bad_name", "Invalid file name");
     const expected = Number(request.headers.get("Content-Length"));
     if (!request.body || !(expected >= 0) || expected > MAX_UPLOAD) return err(400, "bad_upload", "Missing, invalid or too large Content-Length");
+    // rozmiar z identyfikatora (nazwa~rozmiar~hash) musi się zgadzać – inaczej odbiorca czekałby wiecznie
+    const named = Number((id.match(/~(\d+)~[0-9a-f]+/) || [])[1]);
+    if (named && named !== expected) return err(400, "size_mismatch", "File changed since it was added");
     const st = this.ctx.storage;
     const reader = request.body.getReader();
     let buf = new Uint8Array(CHUNK), fill = 0, n = 0, total = 0;

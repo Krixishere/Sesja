@@ -10,7 +10,7 @@
 --
 --   Wymagania: REAPER 6.0+, program curl (wbudowany w Windows 10/11 i macOS).
 
-local VERSION = "1.7.1"
+local VERSION = "1.7.2"
 local M = {}
 
 -------------------------------------------------------------------------------
@@ -304,6 +304,16 @@ function M.fx_skeleton(header)
   return table.concat(out, "\n")
 end
 
+--- Lista wtyczek (linie otwierające bloki) – do sprawdzenia, czy łańcuch FX jest ten sam.
+function M.fx_ids(header)
+  local t = {}
+  for _, line in ipairs(split_lines(header)) do
+    local tok = line:match("^<(%S+)")
+    if tok and PLUGIN_BLOCK[tok] then t[#t + 1] = line end
+  end
+  return table.concat(t, "\n")
+end
+
 function M.build_track_chunk(header, locals, items)
   local h = split_lines(M.strip_fxp(header))
   local out = { h[1] or "<TRACK" }
@@ -508,6 +518,7 @@ local L = {
     item_add = "dodaje klip „%s” na ścieżce „%s” @ %s", item_edit = "edytuje klip „%s” (%s)", item_del = "usuwa klip „%s”",
     order = "zmienia kolejność ścieżek", tempo = "ustawia tempo na %.2f BPM", comment_del = "usuwa komentarz",
     no_name = "bez nazwy", clip = "klip",
+    file_gone = "Pliku %s nie ma już na dysku – dodaj go jeszcze raz (np. nie prosto z ZIP-a)", on_server = "wysyłany: %d%%",
     upload_failed = "Nie udało się wysłać pliku %s", rejected = "serwer odrzucił żądanie", server_said = "serwer: %s",
     conn_error = "Błąd połączenia", server_error = "Błąd serwera",
     no_curl = "Nie można uruchomić curl (%s)", no_answer = "Brak odpowiedzi serwera (%s)",
@@ -567,6 +578,7 @@ local L = {
     item_add = "added clip “%s” on track “%s” @ %s", item_edit = "edited clip “%s” (%s)", item_del = "deleted clip “%s”",
     order = "reordered the tracks", tempo = "set the tempo to %.2f BPM", comment_del = "deleted a comment",
     no_name = "unnamed", clip = "clip",
+    file_gone = "File %s is no longer on disk – add it again (e.g. not straight from a ZIP)", on_server = "uploading: %d%%",
     upload_failed = "Could not upload file %s", rejected = "the server rejected the request", server_said = "server: %s",
     conn_error = "Connection error", server_error = "Server error",
     no_curl = "Cannot start curl (%s)", no_answer = "No answer from the server (%s)",
@@ -1348,7 +1360,9 @@ local function apply_remote_ops(ops, undoName)
         local h, locals, items = M.normalize_track(cur)
         local mine = sends_to_guid(h)
         local plain = M.strip_fxp(op.chunk)
-        if op.po and M.fx_skeleton(mine) == M.fx_skeleton(op.chunk) and apply_fxp(tr, op.chunk) then
+        -- zmiana samych gałek: ustawiamy tylko gałki – reszty (np. głośności zmienionej w tym
+        -- samym czasie przez kogoś innego) nie ruszamy
+        if op.po and M.fx_ids(mine) == M.fx_ids(op.chunk) and apply_fxp(tr, op.chunk) then
           -- same gałki: ustawione na żywo, wtyczka gra dalej
         elseif M.strip_fxp(mine) ~= plain and not fast_track(tr, h, M.strip_fxp(hdr)) then
           r.SetTrackStateChunk(tr, M.build_track_chunk(hdr, locals, items), false)
@@ -1689,45 +1703,78 @@ end
 -- Wysyłka: małe pliki jednym żądaniem, duże w częściach (postęp, ponawianie części, brak
 -- limitu rozmiaru żądania na serwerze).
 local function start_upload(id, path)
-  local size = file_size(path) or 0
+  local size = file_size(path)
+  -- plik zniknął albo zmienił się po dodaniu (np. jeszcze się kopiował): liczymy go od nowa,
+  -- zamiast w kółko wysyłać nieaktualną wersję
+  if not size or size ~= M.id_size(id) then
+    S.uploads[id], S.fileLocal[id] = nil, nil
+    idCache[path] = nil
+    S.lastCC = -1
+    if not size then status_err(T("file_gone", (path:match("([^/\\]+)$") or path))) end
+    return
+  end
   local P = S.serverParts
   if not P or size <= P then
     http_upload(id, path, function(resp, err) upload_finished(id, resp and resp.ok, err or (resp and server_msg(resp))) end)
     return
   end
+  -- duży plik: do 3 części naraz (szybciej na łączach z dużym opóźnieniem)
   local parts = math.ceil(size / P)
   local prog = S.uploadProg[id]
   if not prog or prog.parts ~= parts then
-    prog = { part = 0, parts = parts, fails = 0 }
+    prog = { part = 0, parts = parts, done = {}, ndone = 0, next = 0, inflight = 0, fails = {}, dead = false }
     S.uploadProg[id] = prog
   end
-  local function send_part()
-    local i = prog.part
+  prog.next, prog.inflight, prog.dead = 0, 0, false
+  local send_part
+  local function launch()
+    while not prog.dead and prog.inflight < 3 do
+      while prog.next < parts and prog.done[prog.next] do prog.next = prog.next + 1 end
+      if prog.next >= parts then return end
+      local i = prog.next
+      prog.next = prog.next + 1
+      send_part(i)
+    end
+  end
+  send_part = function(i)
     local fi = io.open(path, "rb")
-    if not fi then return upload_finished(id, false) end
+    if not fi then prog.dead = true return upload_finished(id, false, T("file_gone", id)) end
     fi:seek("set", i * P)
     local data = fi:read(P) or ""
     fi:close()
     local tmp = new_tmp("part")
     write_file(tmp, data)
     data = nil
+    prog.inflight = prog.inflight + 1
     http_upload(id, tmp, function(resp, err)
       os.remove(tmp)
+      prog.inflight = prog.inflight - 1
+      if prog.dead then return end
       if resp and resp.ok then
-        prog.part, prog.fails = i + 1, 0
-        if resp.done or prog.part >= parts then
-          upload_finished(id, true)
-        else
-          send_part()
+        if not prog.done[i] then prog.done[i] = true; prog.ndone = prog.ndone + 1 end
+        prog.part = prog.ndone
+        if resp.done then
+          prog.dead = true
+          return upload_finished(id, true)
+        end
+        launch()
+        if prog.inflight == 0 and not prog.dead then
+          -- wszystkie części wysłane, a serwer nie potwierdził całości – zaczniemy od nowa
+          prog.dead, prog.done, prog.ndone = true, {}, 0
+          upload_finished(id, false, T("rejected"))
         end
       else
-        prog.fails = prog.fails + 1
-        if prog.fails <= 4 then send_part() -- ta sama część jeszcze raz
-        else upload_finished(id, false, err or (resp and server_msg(resp))) end
+        prog.fails[i] = (prog.fails[i] or 0) + 1
+        if prog.fails[i] <= 4 then
+          send_part(i) -- ta sama część jeszcze raz
+        else
+          prog.dead = true
+          upload_finished(id, false, err or (resp and server_msg(resp)))
+        end
       end
     end, i, parts)
   end
-  send_part()
+  launch()
 end
 
 local function pump_transfers()
@@ -1813,7 +1860,18 @@ local function do_sync()
         if key ~= S.lastTouch then S.lastTouch, touched = key, true end
       end
     end
-    if now() > (S.nextFullDiff or 0) then S.nextFullDiff, touched = now() + 3, true end
+    if now() > (S.nextFullDiff or 0) then
+      S.nextFullDiff, touched = now() + 3, true
+      -- plik zmienił się na dysku po dodaniu (np. bit jeszcze się kopiował): nowy identyfikator,
+      -- więc klip dostanie nową wersję pliku, a serwer – kompletny plik
+      for id, path in pairs(S.fileLocal) do
+        local sz = file_size(path)
+        if sz and sz ~= M.id_size(id) then
+          idCache[path] = nil
+          S.fileLocal[id], S.uploads[id], S.uploadProg[id] = nil, nil, nil
+        end
+      end
+    end
     if cc ~= S.lastCC or touched then
       for _, o in ipairs(diff_local()) do ops[#ops + 1] = o end
       S.lastCC = r.GetProjectStateChangeCount(0)
@@ -1862,6 +1920,7 @@ local function do_sync()
     S.myColor = resp.color or S.myColor
     S.users = resp.users or {}
     S.serverParts = tonumber(resp.parts) or S.serverParts
+    S.remoteProg = resp.progress or {}
     read_review(resp)
     handle_files(resp)
     if resp.resync then
@@ -1872,13 +1931,13 @@ local function do_sync()
     local last = {}
     for i, op in ipairs(list) do
       local k = op_key(op)
-      if k then last[k] = i end
+      if k and not op.po then last[k] = i end -- same gałki niczego nie nadpisują
     end
     local toApply = {}
     for i, op in ipairs(list) do
       note_op(op)
       local k = op_key(op)
-      if k and op.cid ~= S.cid and last[k] == i then toApply[#toApply + 1] = op end
+      if k and op.cid ~= S.cid and (last[k] == i or (op.po and (last[k] or 0) < i)) then toApply[#toApply + 1] = op end
       S.lastSeq = math.max(S.lastSeq, tonumber(op.seq) or 0)
     end
     if not resp.more then S.lastSeq = math.max(S.lastSeq, tonumber(resp.seq) or 0) end
@@ -2857,6 +2916,13 @@ local function draw()
     for id, pr in pairs(S.uploadProg) do
       if S.uploads[id] then
         msg = msg .. "  ·  ↑ " .. (id:match("^(.-)~") or id) .. " " .. math.floor(pr.part / pr.parts * 100) .. "%"
+        break
+      end
+    end
+    -- odbiorca: ile pliku dotarło już na serwer od osoby, która go wysyła
+    for id, pr in pairs(S.remoteProg or {}) do
+      if S.want[id] and type(pr) == "table" and tonumber(pr[2]) then
+        msg = msg .. "  ·  ↓ " .. (id:match("^(.-)~") or id) .. " " .. T("on_server", math.floor((tonumber(pr[1]) or 0) / pr[2] * 100))
         break
       end
     end

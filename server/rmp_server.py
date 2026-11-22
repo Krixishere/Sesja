@@ -440,6 +440,9 @@ def make_handler(srv):
             n = int(self.headers.get("Content-Length") or -1)
             if n < 0 or n > MAX_UPLOAD:
                 return self._err(400, "bad_upload", "Missing or invalid Content-Length")
+            m = re.search(r"~(\d+)~[0-9a-f]+", fid)
+            if m and int(m.group(1)) != n and "part" not in q:
+                return self._err(400, "size_mismatch", "File changed since it was added")
             dest = room.file_path(fid)
             if "part" in q:
                 return self._put_part(fid, dest, q, n)

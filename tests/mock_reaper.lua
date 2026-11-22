@@ -458,6 +458,10 @@ else
     tr.items[1] = new_item(audio_item_chunk(wav, 0, 8), tr)
     bump()
   end)
+  at(4.2, function()
+    -- plik „dociąga się” po dodaniu do REAPERa (np. kopiowanie z pobranych jeszcze trwało)
+    write_wav(DIR .. "/project/gitara.wav", (tonumber(os.getenv("RMP_BIG") or "") or 200000) + 60000)
+  end)
   at(6, function()
     -- Bartek przesuwa klip Ani
     local w = find_track("Wokal")
@@ -502,13 +506,10 @@ local chunkfn = assert(load(src, "@ReaperMultiplayer.lua"))
 chunkfn()
 
 local END = tonumber(os.getenv("RMP_END") or "") or 14
+table.sort(steps, function(x, y) return x.t < y.t end)
 while clock() < END do
-  for i = #steps, 1, -1 do
-    if clock() >= steps[i].t then
-      local s = table.remove(steps, i)
-      s.fn()
-    end
-  end
+  -- kroki scenariusza po kolei, po jednym na obieg pętli (mod dostaje czas między nimi)
+  if steps[1] and clock() >= steps[1].t then table.remove(steps, 1).fn() end
   local fn = deferred
   deferred = nil
   if fn then fn() end

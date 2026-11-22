@@ -485,6 +485,11 @@ fn handle(sh: &Shared, mut req: Request) {
                 return;
             }
             let expected = req.body_length();
+            let named: Option<usize> = id.split('~').nth(1).and_then(|s| s.parse().ok());
+            if !q.contains_key("part") && named.is_some() && expected.is_some() && named != expected {
+                let _ = req.respond(err(400, "size_mismatch", "File changed since it was added"));
+                return;
+            }
             let dest = sh.room(&name).lock().unwrap().file(&id);
             if let Some(part) = q.get("part") {
                 let parts = q.get("parts").and_then(|p| p.parse::<u64>().ok()).unwrap_or(0);

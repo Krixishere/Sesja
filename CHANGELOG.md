@@ -3,6 +3,23 @@
 Nagłówki wersji aplikacji mają postać `## Sesja X.Y.Z` – sekcja trafia automatycznie
 do opisu wydania na GitHubie.
 
+## Sesja 1.7.2
+
+- **Naprawione przesyłanie bitów i dużych plików:**
+  - Bit, który jeszcze kopiował się na dysk w chwili dodania do REAPERa, wysyłał się w kółko
+    i nigdy nie docierał. Teraz mod wykrywa zmianę pliku i wysyła pełną wersję, a serwer odrzuca
+    niepełne pliki, więc nikt nie czeka w nieskończoność.
+  - Plik, który zniknął z dysku (np. wrzucony prosto z ZIP-a), pokazuje jasny komunikat zamiast
+    cichego wiszenia.
+  - Duże pliki idą do 3 części naraz, więc szybciej.
+  - Osoba czekająca na plik widzi w oknie moda, ile procent dotarło już na serwer.
+- Kręcenie gałką wtyczki w tym samym czasie, gdy ktoś inny zmienia głośność, nie cofa już jego zmiany.
+
+## Mod 1.7.2
+
+- Wysyłka do 3 części naraz, ponowne liczenie pliku po zmianie na dysku, postęp u odbiorcy.
+- Zmiana samych gałek nie nadpisuje innych zmian ścieżki.
+
 ## Sesja 1.7.1
 
 - **Mix w obie strony, na żywo.** Kręcenie gałkami wtyczek (kompresor, EQ, pogłos, Auto-Tune…)
