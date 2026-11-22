@@ -3,6 +3,33 @@
 Nagłówki wersji aplikacji mają postać `## Sesja X.Y.Z` – sekcja trafia automatycznie
 do opisu wydania na GitHubie.
 
+## Sesja 1.8.0
+
+- **Mod w REAPERze zbudowany od nowa: prosty panel w stylu REAPERa.**
+  - Kolory brane z Twojego motywu REAPERa (jasnego albo ciemnego).
+  - Domyślnie w dokerze, jak inne panele REAPERa.
+  - Bez zakładek, kart i animacji. Jedna kolumna:
+    - sesja i status (z menu ☰);
+    - kto jest w sesji;
+    - „do zrobienia” (nowe ścieżki, akceptacje, brakujące wtyczki, przesyłanie) z krótkimi przyciskami;
+    - lista zdarzeń;
+    - pole czatu.
+  - Prawy klik w oknie otwiera to samo menu.
+- **Funkcje Sesji jako zwykłe akcje REAPERa** (Actions → szukaj „Sesja”). Można je przypiąć do paska
+  narzędzi albo skrótu:
+  - Pokaż okno;
+  - Komentarz do zaznaczonego klipu;
+  - Wyrenderuj zaznaczone ścieżki dla innych;
+  - Odmroź zaznaczone ścieżki;
+  - Dodaj zaznaczone ścieżki do pokoju;
+  - Rozłącz i zamknij.
+- Zamknięcie okna nie przerywa sesji. „Sesja – Pokaż okno” przywraca okno, także w REAPERze 6.
+
+## Mod 1.8.0
+
+- Nowa warstwa interfejsu (panel w stylu REAPERa, kolory motywu, doker) i akcje REAPERa
+  komunikujące się z działającym modem. Silnik synchronizacji bez zmian.
+
 ## Sesja 1.7.2
 
 - **Naprawione przesyłanie bitów i dużych plików:**
